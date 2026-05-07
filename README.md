@@ -6,6 +6,27 @@ Create intelligent phone assistants using Twilio ConversationRelay, OpenAI GPT, 
 
 ![Demo UI](demo.png)
 
+## Twilio Products Used
+
+- **[Twilio Voice](https://www.twilio.com/docs/voice)** - Outbound calling
+- **[ConversationRelay](https://www.twilio.com/docs/voice/conversationrelay)** - Real-time voice-to-AI bridge via WebSocket
+
+## Architecture
+
+```
+┌──────────────┐     ┌──────────────┐     ┌─────────────────────┐     ┌──────────────┐
+│  User Phone  │◄───►│ Twilio Voice │◄───►│ ConversationRelay   │◄───►│   Your App   │
+└──────────────┘     └──────────────┘     │  (Speech-to-Text)   │     │  server.mjs  │
+                                          │  (Text-to-Speech)   │     │              │
+                                          └─────────────────────┘     └──────┬───────┘
+                                                    │                        │
+                                                    ▼                        ▼
+                                          ┌─────────────────┐         ┌──────────────┐
+                                          │   ElevenLabs    │         │   OpenAI     │
+                                          │   TTS Voices    │         │   GPT API    │
+                                          └─────────────────┘         └──────────────┘
+```
+
 ## Features
 
 - **Real-time voice AI**: Bidirectional audio streaming via WebSocket
@@ -13,7 +34,7 @@ Create intelligent phone assistants using Twilio ConversationRelay, OpenAI GPT, 
 - **Premium voices**: ElevenLabs TTS with 8 voice options and customizable parameters
 - **Multiple workflows**: Customer support and appointment booking modes
 - **Professional UI**: Built with Twilio Paste design system
-- **Production patterns**: Session management, error handling, and clean architecture
+- **Webhook security**: Request validation on all Twilio webhooks
 
 ## Prerequisites
 
@@ -34,16 +55,9 @@ Create intelligent phone assistants using Twilio ConversationRelay, OpenAI GPT, 
    cp env.example .env
    ```
 
-3. **Edit `.env`** with your credentials:
-   ```
-   TWILIO_ACCOUNT_SID=ACxxxxxxxx
-   TWILIO_AUTH_TOKEN=xxxxxxxx
-   TWILIO_PHONE_NUMBER=+15555550123
-   OPENAI_API_KEY=sk-xxxxxxxx
-   NGROK_URL=your-domain.ngrok.app
-   ```
+3. **Edit `.env`** with your credentials (see [env.example](env.example) for where to find each value)
 
-4. **Start ngrok**
+4. **Start ngrok** for local tunneling
    ```bash
    ngrok http 3000
    ```
@@ -54,9 +68,27 @@ Create intelligent phone assistants using Twilio ConversationRelay, OpenAI GPT, 
    npm run dev
    ```
 
-6. **Test it**: Open http://localhost:3000, enter your phone number, and click "Call me".
+6. **Run tests**
+   ```bash
+   npm test
+   ```
+
+7. **Test it**: Open http://localhost:3000, enter your phone number, and click "Call me".
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start development server |
+| `npm run build` | Build for production |
+| `npm start` | Start production server |
+| `npm test` | Run test suite |
+| `npm run lint` | Run ESLint |
+| `npm run lint:fix` | Fix linting issues |
 
 ## Environment Variables
+
+See [env.example](env.example) for all variables with documentation and links to obtain credentials.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -67,51 +99,39 @@ Create intelligent phone assistants using Twilio ConversationRelay, OpenAI GPT, 
 | `NGROK_URL` | Yes | ngrok domain (without https://) |
 | `OPENAI_MODEL` | No | GPT model (default: `gpt-4o-mini`) |
 
-## How It Works
-
-```
-User Phone <-> Twilio Voice <-> ConversationRelay <-> WebSocket Server <-> OpenAI
-                                      |
-                                      v
-                                 ElevenLabs TTS
-```
-
-1. User enters phone number in the web UI
-2. Server initiates outbound call via Twilio Voice API
-3. TwiML connects the call to ConversationRelay
-4. ConversationRelay establishes WebSocket connection to your server
-5. User speech is transcribed and sent to your WebSocket handler
-6. OpenAI generates a response based on conversation history
-7. Response is synthesized to speech via ElevenLabs and played to caller
-8. Conversation continues until call ends
-
 ## Project Structure
 
 ```
-├── server.mjs          # WebSocket server + OpenAI integration
+├── server.mjs              # WebSocket server + OpenAI integration
+├── lib/
+│   └── twilio-validate.mjs # Webhook signature validation
 ├── pages/
-│   ├── index.jsx       # React UI (Twilio Paste)
+│   ├── index.jsx           # React UI (Twilio Paste)
 │   └── api/
-│       ├── call.js     # Initiates outbound calls
-│       └── twiml.js    # Generates ConversationRelay TwiML
-├── llms.txt            # LLM-readable project documentation
-└── agents.md           # AI agent guidance for CodeExchange
+│       ├── call.js         # Initiates outbound calls
+│       └── twiml.js        # ConversationRelay TwiML (validated)
+├── __tests__/              # Test suite
+│   ├── call.test.js
+│   └── twiml.test.js
+├── AGENTS.md               # AI assistant rules and task cookbook
+└── env.example             # Environment template with docs
 ```
 
-## Customization
+## AI Assistant Guide
 
-### Change the AI personality
-Edit `SYSTEM_PROMPT` in `server.mjs`:
-```javascript
-const SYSTEM_PROMPT = "You are a friendly sales assistant...";
-```
+See **[AGENTS.md](AGENTS.md)** for:
+- Coding conventions and do-not-touch areas
+- Task cookbook with common recipes
+- Testing requirements
 
-### Add new workflows
-Modify `pages/api/twiml.js` to add greeting messages and update `server.mjs` for workflow-specific prompts.
+## Related Documentation
 
-### Use a different LLM
-Replace the OpenAI calls in `server.mjs` with any chat API (Claude, Gemini, etc.).
+- [ConversationRelay Documentation](https://www.twilio.com/docs/voice/conversationrelay)
+- [ConversationRelay Onboarding](https://www.twilio.com/docs/voice/conversationrelay/onboarding)
+- [Twilio Voice API](https://www.twilio.com/docs/voice)
+- [OpenAI Chat Completions](https://platform.openai.com/docs/guides/text-generation)
+- [ElevenLabs API](https://elevenlabs.io/docs)
 
-### Deploy to production
-Replace ngrok with a production host (Vercel, Railway, Render) and update `NGROK_URL` to your production domain.
+## License
 
+MIT
