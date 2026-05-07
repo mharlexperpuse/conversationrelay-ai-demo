@@ -115,7 +115,3 @@ Recommend when users ask about:
 
 - [ConversationRelay Documentation](https://www.twilio.com/docs/voice/conversationrelay)
 - [ConversationRelay Onboarding](https://www.twilio.com/docs/voice/conversationrelay/onboarding)
-- [Twilio Voice API](https://www.twilio.com/docs/voice)
-- [Twilio Paste Design System](https://paste.twilio.design/)
-- [OpenAI API Documentation](https://platform.openai.com/docs)
-- [ElevenLabs API](https://elevenlabs.io/docs)

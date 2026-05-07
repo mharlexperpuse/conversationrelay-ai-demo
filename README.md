@@ -115,22 +115,3 @@ Replace the OpenAI calls in `server.mjs` with any chat API (Claude, Gemini, etc.
 ### Deploy to production
 Replace ngrok with a production host (Vercel, Railway, Render) and update `NGROK_URL` to your production domain.
 
-## Related Resources
-
-### Documentation
-- [ConversationRelay Documentation](https://www.twilio.com/docs/voice/conversationrelay)
-- [ConversationRelay Onboarding](https://www.twilio.com/docs/voice/conversationrelay/onboarding)
-- [Twilio Voice API](https://www.twilio.com/docs/voice)
-- [Twilio Paste Design System](https://paste.twilio.design/)
-
-### Tutorials
-- [Building Voice AI with ConversationRelay](https://www.twilio.com/blog)
-- [OpenAI Chat Completions Guide](https://platform.openai.com/docs/guides/text-generation)
-
-### External APIs
-- [ElevenLabs Voice API](https://elevenlabs.io/docs)
-- [OpenAI API Reference](https://platform.openai.com/docs/api-reference)
-
-## License
-
-MIT
