@@ -6,450 +6,178 @@ import OpenAI from "openai";
 import dotenv from "dotenv";
 
 dotenv.config();
-
 const dev = process.env.NODE_ENV !== "production";
 const PORT = process.env.PORT || 3000;
-
-/*
-|--------------------------------------------------------------------------
-| SOFIA - WEBLYNXFORGE SALES ASSISTANT
-|--------------------------------------------------------------------------
-*/
-
-const SYSTEM_PROMPT = `
-You are Sofia, the sales assistant for WebLynxForge.
-
-You are speaking with business owners by phone.
-
-Your job is to have a natural, friendly, warm, cheerful, professional
-conversation and find out whether the business needs a website or
-a better website.
-
-WEBLYNXFORGE SERVICE:
-
-WebLynxForge provides a managed website service for $99 per month.
-
-The customer does NOT need to build the website themselves.
-
-The customer does NOT need to use a website builder.
-
-The customer does NOT need to code anything.
-
-The customer does NOT need to understand hosting, servers,
-WordPress, website builders, or other technical systems.
-
-WebLynxForge handles the website work for the customer.
-
-The customer's role is simply to tell us about their business,
-what they need from their website, and provide the business
-information and content needed for the website.
-
-The service costs $99 per month.
-
-SALES CONVERSATION:
-
-Keep the conversation simple and focused on the customer's business.
-
-Ask short, natural questions such as:
-
-Do you currently have a website?
-
-What kind of business do you have?
-
-Are you happy with your current website?
-
-What would you like your website to help your business accomplish?
-
-If they do not have a website, explain that WebLynxForge can
-handle the website for them.
-
-If they already have a website, ask whether they are happy with it
-and whether they would be interested in having WebLynxForge
-improve or manage their website.
-
-When appropriate, explain naturally that the WebLynxForge managed
-website service is $99 per month.
-
-Do not pressure the customer.
-
-Do not repeatedly mention the price.
-
-Do not give long sales speeches.
-
-Keep responses short enough for a natural phone conversation.
-
-IMPORTANT:
-
-Never tell the customer to go to a website builder.
-
-Never tell the customer to build their own website.
-
-Never tell the customer to configure hosting.
-
-Never tell the customer to install software.
-
-Never tell the customer to write code.
-
-Never give the customer technical setup instructions.
-
-Never suggest that they need to hire another developer or another
-website company.
-
-Do not invent additional WebLynxForge products, fees, discounts,
-contracts, guarantees, features, or policies.
-
-Do not promise a specific completion date unless that information
-has explicitly been provided.
-
-If you do not know a specific WebLynxForge policy or service detail,
-say that a WebLynxForge team member can confirm that detail.
-
-INTERESTED CUSTOMER:
-
-If the customer is interested, acknowledge their interest and
-briefly explain that the WebLynxForge team can take care of the
-website and the managed service is $99 per month.
-
-Do not invent a payment link.
-
-Do not invent a checkout URL.
-
-Do not claim that payment has been completed unless the system
-actually confirms it.
-
-IDENTITY:
-
-Your name is Sofia.
-
-You are calling on behalf of WebLynxForge.
-
-Do not proactively start talking about being AI, automated,
-a bot, or artificial intelligence.
-
-If someone asks an unrelated identity question, redirect politely
-to the reason for the call.
-
-If they directly and persistently ask whether you are an AI or
-automated system, answer truthfully and briefly, then return to
-the WebLynxForge conversation.
-
-TONE:
-
-Sound cheerful, warm, friendly, youthful, and professional.
-
-Do not sound aggressive or overly salesy.
-
-Use conversational American English.
-
-Use short sentences.
-
-Ask only one main question at a time.
-
-Do not use bullet points, markdown, emojis, special symbols,
-or numbered lists because your responses will be spoken aloud.
-
-Spell out numbers when appropriate for speech.
-
-Do not say dollar sign ninety nine.
-Say ninety nine dollars per month.
-
-OPENING:
-
-When continuing after the initial greeting, naturally begin the
-conversation about the customer's business.
-
-Do not repeat your introduction unnecessarily.
-`;
-
-
-/*
-|--------------------------------------------------------------------------
-| OPENAI
-|--------------------------------------------------------------------------
-*/
-
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const sessions = new Map();
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const SYSTEM_PROMPT = `You are Sofia, the WebLynxForge sales assistant on a live business phone call.
+Be warm, natural, concise, and professional. Keep responses short because they are spoken aloud.
+LANGUAGE RULE: The caller may use English, Mexican Spanish, or Tagalog/Filipino. Once the caller chooses a language, speak naturally in that language. Do not translate every sentence into all three languages. If the caller asks to change language later, continue in the newly requested language.
+WebLynxForge provides a managed business website service for $99 per month. WebLynxForge handles the website work; never tell the customer to build, code, configure hosting, install software, or use a website builder.
+Do not invent fees, discounts, guarantees, completion dates, policies, or products.
+Do not proactively discuss being AI. If directly asked whether you are AI or automated, answer briefly and truthfully, then return to the business purpose. Never claim to be human.
+When the customer is interested, ask only the minimum business questions needed. Do not say that a team member will contact them later.
+CLOSING RULE: When the customer clearly agrees to proceed with the $99/month service, offer to send the secure checkout link to the same phone number. The verbal SMS consent must match the registered flow: explain that WebLynxForge will send the requested checkout and related service updates, message frequency varies, message and data rates may apply, reply HELP for help or STOP to opt out, and state Terms https://weblynxforge.dev/terms.php and Privacy https://weblynxforge.dev/privacy.php. Ask for an explicit yes or no. Only after the customer explicitly says yes to receiving the text, call the send_checkout_link tool. Never call it merely because they said yes to buying the website.
+After the tool reports checkout_sent or already_sent, say: "Perfect. I just sent the secure WebLynxForge checkout link to this number. It's ninety-nine dollars per month."
+If the tool reports sms_not_enabled, do not claim a text was sent. Say the checkout text service is not active yet and continue politely.`;
 
+const tools = [{
+  type: "function",
+  function: {
+    name: "send_checkout_link",
+    description: "Send the unique WebLynxForge $99/month Stripe checkout link by SMS. Use only after the customer explicitly consents to receive the SMS during this call.",
+    parameters: {
+      type: "object",
+      properties: { sms_consent_confirmed: { type: "boolean" } },
+      required: ["sms_consent_confirmed"],
+      additionalProperties: false
+    }
+  }
+}];
 
-async function aiResponse(conversation) {
-
-  const response = await openai.chat.completions.create({
-
-    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-
-    messages: [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT,
-      },
-      ...conversation,
-    ],
-
-    /*
-     * Keep Sofia concise for natural phone conversations
-     * and lower token usage.
-     */
-    max_tokens: 180,
-
-    temperature: 0.7,
-
+async function sendCheckoutLink(ctx) {
+  if (!ctx?.leadId || !ctx?.closeToken || !ctx?.closeEndpoint) return { ok:false, error:"missing_lead_context" };
+  const res = await fetch(ctx.closeEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lead_id: Number(ctx.leadId), close_token: ctx.closeToken })
   });
+  let data = {};
+  try { data = await res.json(); } catch { data = { ok:false, error:"invalid_close_response" }; }
+  return { http_status: res.status, ...data };
+}
 
-  return response.choices[0].message.content;
+async function runAssistant(conversation, ctx) {
+  const response = await openai.chat.completions.create({
+    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+    messages: [{ role:"system", content:SYSTEM_PROMPT }, ...conversation],
+    tools,
+    tool_choice: "auto",
+    max_tokens: 180,
+    temperature: 0.7
+  });
+  const msg = response.choices[0].message;
+  if (!msg.tool_calls?.length) return { text: msg.content || "Could you say that again?", message: msg };
+
+  conversation.push(msg);
+  for (const call of msg.tool_calls) {
+    let result = { ok:false, error:"unknown_tool" };
+    if (call.function?.name === "send_checkout_link") {
+      let args = {};
+      try { args = JSON.parse(call.function.arguments || "{}"); } catch {}
+      result = args.sms_consent_confirmed === true ? await sendCheckoutLink(ctx) : { ok:false, error:"sms_consent_not_confirmed" };
+    }
+    conversation.push({ role:"tool", tool_call_id:call.id, content:JSON.stringify(result) });
+  }
+  const follow = await openai.chat.completions.create({
+    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+    messages: [{ role:"system", content:SYSTEM_PROMPT }, ...conversation],
+    tools,
+    tool_choice: "none",
+    max_tokens: 100,
+    temperature: 0.4
+  });
+  return { text: follow.choices[0].message.content || "Thank you.", message: follow.choices[0].message };
 }
 
 
-/*
-|--------------------------------------------------------------------------
-| NEXT.JS
-|--------------------------------------------------------------------------
-*/
+const LANGUAGE_MAP = {
+  "en-US": { label:"English", ready:"Absolutely. How can I help you today?" },
+  "es-MX": { label:"Mexican Spanish", ready:"Claro. ¿Cómo puedo ayudarle hoy?" },
+  "fil-PH": { label:"Tagalog", ready:"Sige. Paano kita matutulungan ngayon?" }
+};
+
+function requestedLanguage(text="") {
+  const q = text.toLowerCase().trim();
+  if (/\b(tagalog|filipino|pilipino)\b/.test(q)) return "fil-PH";
+  if (/\b(espa[nñ]ol|spanish|mexican|méxico|mexico)\b/.test(q)) return "es-MX";
+  if (/\b(english|ingles|inglés)\b/.test(q)) return "en-US";
+  return "";
+}
+
+function switchLanguage(ws, code, announce=true) {
+  if (!LANGUAGE_MAP[code]) return false;
+  ws.ctx.language = code;
+  ws.ctx.languageSelected = true;
+  ws.send(JSON.stringify({ type:"language", ttsLanguage:code, transcriptionLanguage:code }));
+  if (announce) ws.send(JSON.stringify({ type:"text", token:LANGUAGE_MAP[code].ready, lang:code, last:true }));
+  console.log("Language switched:", ws.callSid, code);
+  return true;
+}
 
 const app = next({ dev });
-
 const handle = app.getRequestHandler();
-
-
 app.prepare().then(() => {
+  const server = createServer((req,res) => handle(req,res,parse(req.url,true)));
+  const wss = new WebSocketServer({ server, path:"/ws" });
 
-  const server = createServer((req, res) => {
+  wss.on("connection", ws => {
+    ws.callSid = null;
+    ws.ctx = {};
+    ws.on("message", async data => {
+      let message;
+      try { message = JSON.parse(data.toString()); } catch { return; }
+      if (message.type === "setup") {
+        ws.callSid = message.callSid;
+        const cp = message.customParameters || {};
+        ws.ctx = {
+          leadId: cp.lead_id || "",
+          calledPhone: cp.called_phone || "",
+          businessName: cp.business_name || "",
+          contactName: cp.contact_name || "",
+          closeEndpoint: cp.close_endpoint || "",
+          closeToken: cp.close_token || "",
+          callMode: cp.call_mode || "outbound",
+          language: "en-US",
+          languageSelected: cp.call_mode !== "inbound"
+        };
+        const context = [];
+        if (ws.ctx.businessName) context.push(`Business: ${ws.ctx.businessName}`);
+        if (ws.ctx.contactName) context.push(`Contact: ${ws.ctx.contactName}`);
+        sessions.set(ws.callSid, context.length ? [{ role:"system", content:"Lead context for this call: "+context.join("; ") }] : []);
+        console.log("Setup for call:", ws.callSid, "lead:", ws.ctx.leadId || "none");
+        return;
+      }
+      if (message.type === "dtmf" && ws.ctx.callMode === "inbound") {
+        const code = message.digit === "1" ? "en-US" : message.digit === "2" ? "es-MX" : message.digit === "3" ? "fil-PH" : "";
+        if (code) switchLanguage(ws, code, true);
+        return;
+      }
+      if (message.type !== "prompt" || !message.voicePrompt || message.last === false) return;
 
-    const parsedUrl = parse(req.url, true);
-
-    handle(req, res, parsedUrl);
-
-  });
-
-
-  /*
-  |--------------------------------------------------------------------------
-  | TWILIO CONVERSATIONRELAY WEBSOCKET
-  |--------------------------------------------------------------------------
-  */
-
-  const wss = new WebSocketServer({
-    server,
-    path: "/ws",
-  });
-
-
-  wss.on("connection", (ws) => {
-
-    console.log("WebSocket connected");
-
-
-    ws.on("message", async (data) => {
-
-      try {
-
-        const message = JSON.parse(data);
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | CALL SETUP
-        |--------------------------------------------------------------------------
-        */
-
-        if (message.type === "setup") {
-
-          console.log(
-            "Setup for call:",
-            message.callSid
-          );
-
-          ws.callSid = message.callSid;
-
-          sessions.set(
-            message.callSid,
-            []
-          );
-
+      const requested = requestedLanguage(message.voicePrompt);
+      if (ws.ctx.callMode === "inbound" && (!ws.ctx.languageSelected || requested)) {
+        if (requested) {
+          switchLanguage(ws, requested, true);
           return;
         }
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | CUSTOMER SPEAKS
-        |--------------------------------------------------------------------------
-        */
-
-        if (message.type === "prompt") {
-
-          console.log(
-            "Prompt:",
-            message.voicePrompt
-          );
-
-
-          const conversation =
-            sessions.get(ws.callSid) || [];
-
-
-          conversation.push({
-
-            role: "user",
-
-            content:
-              message.voicePrompt,
-
-          });
-
-
-          try {
-
-            const response =
-              await aiResponse(
-                conversation
-              );
-
-
-            conversation.push({
-
-              role: "assistant",
-
-              content: response,
-
-            });
-
-
-            /*
-             * Prevent conversation history
-             * from growing forever.
-             *
-             * Keep only recent conversation.
-             */
-
-            if (conversation.length > 16) {
-
-              conversation.splice(
-                0,
-                conversation.length - 16
-              );
-
-            }
-
-
-            sessions.set(
-              ws.callSid,
-              conversation
-            );
-
-
-            /*
-             * Send Sofia's answer
-             * back to ConversationRelay
-             */
-
-            ws.send(
-              JSON.stringify({
-
-                type: "text",
-
-                token: response,
-
-                last: true,
-
-              })
-            );
-
-
-            console.log(
-              "Response:",
-              response
-            );
-
-
-          } catch (err) {
-
-            console.error(
-              "OpenAI error:",
-              err
-            );
-
-
-            ws.send(
-              JSON.stringify({
-
-                type: "text",
-
-                token:
-                  "I'm sorry, I had a brief connection problem. Could you say that again?",
-
-                last: true,
-
-              })
-            );
-
-          }
-
+        if (!ws.ctx.languageSelected) {
+          ws.send(JSON.stringify({ type:"text", token:"Please say English, Español, or Tagalog. You can also press one, two, or three.", lang:"en-US", last:true }));
+          return;
         }
+      }
 
+      const conversation = sessions.get(ws.callSid) || [];
+      conversation.push({ role:"user", content:message.voicePrompt });
+      try {
+        const out = await runAssistant(conversation, ws.ctx);
+        conversation.push({ role:"assistant", content:out.text });
+        while (conversation.length > 20) conversation.shift();
+        sessions.set(ws.callSid, conversation);
+        ws.send(JSON.stringify({ type:"text", token:out.text, lang:ws.ctx.language || "en-US", last:true }));
+        console.log("Response:", out.text);
       } catch (err) {
-
-        console.error(
-          "WebSocket message error:",
-          err
-        );
-
+        console.error("Sofia error:", err);
+        const errText = ws.ctx.language === "es-MX"
+          ? "Lo siento, hubo un breve problema de conexión. ¿Puede repetirlo?"
+          : ws.ctx.language === "fil-PH"
+            ? "Paumanhin, nagkaroon ng saglit na problema sa koneksyon. Maaari mo bang ulitin?"
+            : "I'm sorry, I had a brief connection problem. Could you say that again?";
+        ws.send(JSON.stringify({ type:"text", token:errText, lang:ws.ctx.language || "en-US", last:true }));
       }
-
     });
-
-
-    /*
-    |--------------------------------------------------------------------------
-    | CALL ENDS
-    |--------------------------------------------------------------------------
-    */
-
-    ws.on("close", () => {
-
-      console.log(
-        "WebSocket closed"
-      );
-
-
-      if (ws.callSid) {
-
-        sessions.delete(
-          ws.callSid
-        );
-
-      }
-
-    });
-
-
-    ws.on("error", (err) => {
-
-      console.error(
-        "WebSocket error:",
-        err
-      );
-
-    });
-
+    ws.on("close", () => { if (ws.callSid) sessions.delete(ws.callSid); });
   });
-
-
-  /*
-  |--------------------------------------------------------------------------
-  | SERVER
-  |--------------------------------------------------------------------------
-  */
-
-  server.listen(PORT, () => {
-
-    console.log(
-      `Server running at http://localhost:${PORT}`
-    );
-
-  });
-
+  server.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
 });
