@@ -226,6 +226,22 @@ If the tool reports sms_not_enabled, do not claim that a text was sent.
 
 Explain politely that the signup text service is not active yet.
 
+CALL ENDING AND HANG-UP:
+You can end the phone call by using the end_call tool, but only when the conversation is genuinely finished.
+
+Use end_call when:
+- The customer clearly says goodbye, bye, that's all, please hang up, or otherwise clearly ends the conversation.
+- The customer clearly says they are not interested and wants the conversation to stop.
+- The customer asks not to be called again, asks to be removed, or makes another clear do-not-call request.
+- The signup-link closing is complete and both sides are clearly finished with the conversation.
+- An inbound caller's purpose has been fully handled and the caller clearly indicates they are finished.
+
+Do NOT use end_call merely because the customer raises an ordinary sales objection, says they already have a website, says the price sounds expensive, says they need to think about it, asks a question, pauses, or sounds uncertain.
+
+Before ending, use a short, natural, polite final goodbye in the customer's current language.
+Examples include "Thank you for your time. Have a great day!" or another concise closing appropriate to the conversation.
+Do not continue selling after a clear request to stop or a do-not-call request.
+
 TRUTHFULNESS:
 Never invent facts about WebLynxForge, the customer's business, their current website, competitors, pricing, results, policies, domain availability, SEO results, or Google performance.
 
@@ -246,6 +262,31 @@ const tools = [
           }
         },
         required: ["sms_consent_confirmed"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "end_call",
+      description:
+        "End the phone conversation cleanly only when the customer clearly ends the conversation, clearly asks to stop or not be called again, or the closing is genuinely complete.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: {
+            type: "string",
+            description:
+              "Short internal reason for ending the call, such as customer_goodbye, not_interested, do_not_call, closing_complete, or inbound_complete."
+          },
+          goodbye: {
+            type: "string",
+            description:
+              "A short natural final goodbye to speak to the customer before ending the ConversationRelay session."
+          }
+        },
+        required: ["reason", "goodbye"],
         additionalProperties: false
       }
     }
@@ -322,7 +363,8 @@ async function runAssistant(conversation, ctx) {
   if (!msg.tool_calls?.length) {
     return {
       text: msg.content || "Could you say that again?",
-      message: msg
+      message: msg,
+      endCall: null
     };
   }
 
@@ -330,6 +372,8 @@ async function runAssistant(conversation, ctx) {
     ...conversation,
     msg
   ];
+
+  let endCall = null;
 
   for (const call of msg.tool_calls) {
     let result = {
@@ -353,11 +397,48 @@ async function runAssistant(conversation, ctx) {
             };
     }
 
+    if (call.function?.name === "end_call") {
+      let args = {};
+
+      try {
+        args = JSON.parse(call.function.arguments || "{}");
+      } catch {}
+
+      const goodbye =
+        typeof args.goodbye === "string" && args.goodbye.trim()
+          ? args.goodbye.trim()
+          : "Thank you for your time. Have a great day!";
+
+      const reason =
+        typeof args.reason === "string" && args.reason.trim()
+          ? args.reason.trim()
+          : "conversation_complete";
+
+      endCall = {
+        reason,
+        goodbye
+      };
+
+      result = {
+        ok: true,
+        ending_call: true,
+        reason
+      };
+    }
+
     toolConversation.push({
       role: "tool",
       tool_call_id: call.id,
       content: JSON.stringify(result)
     });
+  }
+
+  if (endCall) {
+    return {
+      text: endCall.goodbye,
+      message: msg,
+      endCall
+    };
   }
 
   const follow = await openai.chat.completions.create({
@@ -387,7 +468,8 @@ async function runAssistant(conversation, ctx) {
 
   return {
     text: followMsg.content || "Thank you.",
-    message: followMsg
+    message: followMsg,
+    endCall: null
   };
 }
 
@@ -659,11 +741,55 @@ app.prepare().then(() => {
             type: "text",
             token: out.text,
             lang: ws.ctx.language || "en-US",
-            last: true
+            last: true,
+            interruptible: false,
+            preemptible: false
           })
         );
 
         console.log("Response:", out.text);
+
+        if (out.endCall) {
+          const wordCount = String(out.text || "")
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean).length;
+
+          const goodbyeDelayMs = Math.min(
+            7000,
+            Math.max(1800, wordCount * 360 + 700)
+          );
+
+          console.log(
+            "Call ending requested:",
+            ws.callSid,
+            out.endCall.reason,
+            "delay_ms:",
+            goodbyeDelayMs
+          );
+
+          setTimeout(() => {
+            if (ws.readyState !== 1) {
+              return;
+            }
+
+            ws.send(
+              JSON.stringify({
+                type: "end",
+                handoffData: JSON.stringify({
+                  reasonCode: "sofia-call-complete",
+                  reason: out.endCall.reason
+                })
+              })
+            );
+
+            console.log(
+              "ConversationRelay end sent:",
+              ws.callSid,
+              out.endCall.reason
+            );
+          }, goodbyeDelayMs);
+        }
       } catch (err) {
         console.error("Sofia error:", {
           name: err?.name || "Error",
