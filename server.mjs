@@ -233,13 +233,15 @@ Only after the customer explicitly agrees to receive the text may you call the s
 
 Agreement to purchase the WebLynxForge service by itself is NOT SMS consent.
 
-After the tool reports checkout_sent or already_sent, tell the customer that the secure WebLynxForge signup link was sent to their number.
+After the tool reports a CONFIRMED successful SMS result, tell the customer that the secure WebLynxForge signup link was sent to their number.
+
+A successful SMS result means the tool returned ok=true, sent=true, a valid Twilio Message SID beginning with SM, and status checkout_sent or already_sent.
 
 Briefly explain that they will enter their information and website details, review them, continue to secure checkout, and after payment is confirmed choose their included domain.
 
-If the tool reports sms_not_enabled, do not claim that a text was sent.
+NEVER say or imply that an SMS was sent unless the send_checkout_link tool actually returned that confirmed successful result during this call.
 
-Explain politely that the signup text service is not active yet.
+If the tool returns sms_not_enabled, missing_lead_context, invalid_close_response, close_endpoint_unreachable, sms_send_failed, previous_sms_status_unavailable, suppressed, twilio_sms_not_configured, or any other failure, do NOT claim that a text was sent. Tell the customer briefly that the text could not be confirmed or sent just now.
 
 CALL ENDING AND HANG-UP:
 Sofia must recognize when the conversation is genuinely finished and end the call cleanly.
@@ -313,40 +315,87 @@ const tools = [
   }
 ];
 
+function smsWasConfirmed(result) {
+  const status = String(result?.status || "").toLowerCase();
+  const sid = String(result?.message_sid || "");
+
+  return Boolean(
+    result?.ok === true &&
+    result?.sent === true &&
+    (status === "checkout_sent" || status === "already_sent") &&
+    /^SM[0-9a-fA-F]{32}$/.test(sid)
+  );
+}
+
+function textClaimsSmsWasSent(text = "") {
+  const q = String(text || "").toLowerCase();
+
+  return (
+    /\b(i|we)(?:'ve| have)?\s+(?:just\s+)?sent\b/.test(q) ||
+    /\b(i|we)\s+sent\b/.test(q) ||
+    /\b(?:signup|secure|checkout)?\s*(?:link|text|message)\s+(?:was|has been|is)\s+sent\b/.test(q) ||
+    /\btext\s+(?:was|has been|is)\s+sent\b/.test(q)
+  );
+}
+
+function smsFailureSpeech(ctx, result = {}) {
+  const language =
+    ctx?.language === "es-MX" || ctx?.language === "es"
+      ? "es"
+      : "en";
+
+  if (language === "es") {
+    return "Lo siento, no pude confirmar el envío del mensaje de texto en este momento. No voy a decir que fue enviado hasta que el sistema lo confirme.";
+  }
+
+  return "I'm sorry, I couldn't confirm that the text was sent just now. I won't say it was sent until the system confirms it.";
+}
+
 async function sendCheckoutLink(ctx) {
   if (!ctx?.leadId || !ctx?.closeToken || !ctx?.closeEndpoint) {
     return {
       ok: false,
+      sent: false,
       error: "missing_lead_context"
     };
   }
 
-  const res = await fetch(ctx.closeEndpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      lead_id: Number(ctx.leadId),
-      close_token: ctx.closeToken
-    })
-  });
-
-  let data = {};
-
   try {
-    data = await res.json();
-  } catch {
-    data = {
+    const res = await fetch(ctx.closeEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        lead_id: Number(ctx.leadId),
+        close_token: ctx.closeToken
+      })
+    });
+
+    let data = {};
+
+    try {
+      data = await res.json();
+    } catch {
+      data = {
+        ok: false,
+        sent: false,
+        error: "invalid_close_response"
+      };
+    }
+
+    return {
+      http_status: res.status,
+      ...data
+    };
+  } catch (err) {
+    return {
       ok: false,
-      error: "invalid_close_response"
+      sent: false,
+      error: "close_endpoint_unreachable",
+      message: err?.message || String(err)
     };
   }
-
-  return {
-    http_status: res.status,
-    ...data
-  };
 }
 
 async function runAssistant(conversation, ctx) {
@@ -393,8 +442,33 @@ async function runAssistant(conversation, ctx) {
   }
 
   if (!msg.tool_calls?.length) {
+    const plainText =
+      msg.content || "Could you say that again?";
+
+    if (
+      textClaimsSmsWasSent(plainText) &&
+      ctx?.smsConfirmedThisCall !== true
+    ) {
+      console.warn("Blocked unconfirmed SMS success claim:", {
+        leadId: ctx?.leadId || null,
+        callMode: ctx?.callMode || null,
+        hasCloseEndpoint: Boolean(ctx?.closeEndpoint),
+        hasCloseToken: Boolean(ctx?.closeToken)
+      });
+
+      return {
+        text: smsFailureSpeech(ctx, {
+          ok: false,
+          sent: false,
+          error: "unconfirmed_sms_claim"
+        }),
+        message: msg,
+        endCall: false
+      };
+    }
+
     return {
-      text: msg.content || "Could you say that again?",
+      text: plainText,
       message: msg,
       endCall: false
     };
@@ -423,8 +497,49 @@ async function runAssistant(conversation, ctx) {
           ? await sendCheckoutLink(ctx)
           : {
               ok: false,
+              sent: false,
               error: "sms_consent_not_confirmed"
             };
+
+      const safeSmsLog = {
+        ok: result?.ok === true,
+        sent: result?.sent === true,
+        status: result?.status || null,
+        error: result?.error || null,
+        http_status: result?.http_status || null,
+        message_sid: result?.message_sid || null,
+        twilio_status: result?.twilio_status || null,
+        leadId: ctx?.leadId || null,
+        callMode: ctx?.callMode || null
+      };
+
+      console.log("Sofia SMS tool result:", safeSmsLog);
+
+      if (smsWasConfirmed(result)) {
+        ctx.smsConfirmedThisCall = true;
+
+        const successText =
+          ctx?.language === "es-MX" || ctx?.language === "es"
+            ? "Listo. El enlace seguro de registro de WebLynxForge fue enviado por mensaje de texto a su número."
+            : "Done. The secure WebLynxForge signup link was sent by text to your number.";
+
+        return {
+          text: successText,
+          message: msg,
+          endCall: false,
+          smsConfirmed: true
+        };
+      }
+
+      ctx.smsConfirmedThisCall = false;
+
+      return {
+        text: smsFailureSpeech(ctx, result),
+        message: msg,
+        endCall: false,
+        smsConfirmed: false,
+        smsError: result?.error || "sms_not_confirmed"
+      };
     }
 
     if (call.function?.name === "end_call") {
@@ -730,7 +845,8 @@ app.prepare().then(() => {
           language: cp.call_mode === "inbound" ? "" : "en-US",
           languageSelected: cp.call_mode !== "inbound",
           category: "",
-          categorySelected: cp.call_mode !== "inbound"
+          categorySelected: cp.call_mode !== "inbound",
+          smsConfirmedThisCall: false
         };
 
         const context = [];
@@ -763,7 +879,12 @@ app.prepare().then(() => {
           "lead:",
           ws.ctx.leadId || "none",
           "mode:",
-          ws.ctx.callMode
+          ws.ctx.callMode,
+          "smsContext:",
+          {
+            hasCloseEndpoint: Boolean(ws.ctx.closeEndpoint),
+            hasCloseToken: Boolean(ws.ctx.closeToken)
+          }
         );
 
         return;
