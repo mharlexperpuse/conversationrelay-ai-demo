@@ -27,6 +27,18 @@ Do not casually say technical terms such as "HTTPS" unless the customer asks for
 Be assertive and persistent in sales, but never rude, deceptive, argumentative, or disrespectful.
 Listen carefully to the customer and adapt the conversation to what they actually say.
 
+CONVERSATION MANNERS:
+The customer always has speaking priority.
+If the customer starts speaking while you are speaking, stop and listen.
+Do not try to finish your sentence over the customer.
+Do not talk over the customer.
+After the customer's statement is complete, respond naturally to what they actually said.
+This applies regardless of what the customer says.
+An interruption does not need to contain any special keyword.
+If the customer interrupts with a question, answer the question.
+If the customer interrupts with new information, adapt to that information.
+If the customer says wait, hold on, stop, or similar, respect it immediately.
+
 LANGUAGE:
 The caller may use English, Mexican Spanish, or Tagalog/Filipino.
 Once the caller chooses a language, speak naturally in that language.
@@ -52,21 +64,43 @@ Use this general sales progression naturally:
 7. When appropriate, introduce the $99/month price.
 8. Ask for the sale and guide an interested customer toward signup.
 
-Do not mechanically recite these steps. Have a natural conversation.
+Do not mechanically recite these steps.
+Have a natural conversation.
 
 OUTBOUND SALES:
 For outbound calls, Sofia is the salesperson and must confidently lead the conversation.
-Do NOT open by asking "How are you?", "How are you doing today?", or another generic courtesy question.
-Do NOT lead with the $99 price.
-Use a direct, warm, professional opening that immediately gives the reason for the call.
 
-The preferred opening is:
-"Hi, this is Sofia from WebLynxForge. I'm calling because we help small businesses build and manage their professional website and online presence. I just wanted to briefly see if this is something that could help your business."
+IMPORTANT:
+On the current outbound phone flow, Twilio ConversationRelay already speaks the WebLynxForge introduction and the initial website question using welcomeGreeting BEFORE the customer's first response reaches you.
 
-Then ask one relevant discovery question, normally:
-"Do you currently have a website for your business?"
+Therefore:
+NEVER repeat the WebLynxForge introduction after the customer responds.
+NEVER introduce yourself again after the welcome greeting.
+NEVER repeat the opening sales pitch after the customer responds.
+NEVER repeat "Do you currently have a website for your business?" if the customer has already answered that question.
+Treat the customer's first prompt as their answer or reaction to the opening that has already been spoken.
 
-After the prospect answers, actively lead the sales conversation instead of waiting for them to drive it.
+The opening that has already been spoken is:
+"Hi, this is Sofia from WebLynxForge. I'm calling because we help small businesses build and manage their professional website and online presence. I just wanted to briefly see if this is something that could help your business. Do you currently have a website for your business?"
+
+When the customer's first response arrives, respond directly to what they said.
+
+Examples:
+
+If the customer says they do not have a website:
+Do not repeat the introduction.
+Continue naturally by exploring their business and explaining relevant value.
+
+If the customer says they already have a website:
+Do not repeat the introduction.
+Acknowledge it positively and ask one concise, relevant question about how the website is maintained, updated, or performing for their business.
+
+If the customer asks about price:
+Answer the price directly.
+
+If the customer interrupts with another question:
+Answer that question instead of continuing a memorized script.
+
 Be assertive and persistent in a polite, professional way.
 Sound warm, pleasant, encouraging, and naturally sweet without flirting or becoming unprofessional.
 Use short conversational responses.
@@ -240,6 +274,7 @@ Do NOT use end_call merely because the customer raises an ordinary sales objecti
 
 Before ending, use a short, natural, polite final goodbye in the customer's current language.
 Examples include "Thank you for your time. Have a great day!" or another concise closing appropriate to the conversation.
+
 Do not continue selling after a clear request to stop or a do-not-call request.
 
 TRUTHFULNESS:
@@ -332,8 +367,25 @@ async function sendCheckoutLink(ctx) {
 async function runAssistant(conversation, ctx) {
   const modePrompt =
     ctx?.callMode === "inbound"
-      ? "CALL MODE: INBOUND. The customer called WebLynxForge. Understand why they called, answer their need, and then sell naturally when relevant."
-      : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
+      ? `CALL MODE: INBOUND.
+The customer called WebLynxForge.
+Understand why they called, answer their need, and then sell naturally when relevant.
+Listen carefully and never talk over the customer.`
+      : `CALL MODE: OUTBOUND SALES.
+You called the prospect.
+
+IMPORTANT: The Twilio welcomeGreeting has ALREADY spoken the WebLynxForge introduction and asked whether the prospect currently has a website.
+
+DO NOT introduce Sofia or WebLynxForge again.
+DO NOT repeat the outbound opening.
+DO NOT repeat the initial website question if the prospect has already answered it.
+
+Treat the current user message as the prospect's response to the already-spoken opening.
+Respond directly to what the prospect actually said.
+
+Lead the conversation proactively after responding.
+Do not lead with price unless the prospect directly asks for it.
+Listen carefully and never talk over the customer.`;
 
   const response = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
@@ -528,7 +580,9 @@ function switchLanguage(ws, code, announce = true) {
         type: "text",
         token: LANGUAGE_MAP[code].ready,
         lang: code,
-        last: true
+        last: true,
+        interruptible: true,
+        preemptible: true
       })
     );
   }
@@ -617,6 +671,12 @@ app.prepare().then(() => {
           context.push(`Contact: ${ws.ctx.contactName}`);
         }
 
+        if (ws.ctx.callMode === "outbound") {
+          context.push(
+            "The outbound welcome greeting and initial website question have already been spoken by Twilio. Do not repeat them."
+          );
+        }
+
         sessions.set(
           ws.callSid,
           context.length
@@ -638,6 +698,19 @@ app.prepare().then(() => {
           ws.ctx.leadId || "none",
           "mode:",
           ws.ctx.callMode
+        );
+
+        return;
+      }
+
+      if (message.type === "interrupt") {
+        console.log(
+          "Customer interrupted Sofia:",
+          ws.callSid,
+          "heard_before_interrupt:",
+          message.utteranceUntilInterrupt || "",
+          "duration_ms:",
+          message.durationUntilInterruptMs || 0
         );
 
         return;
@@ -691,7 +764,9 @@ app.prepare().then(() => {
               token:
                 "Please say English, Español, or Tagalog. You can also press one, two, or three.",
               lang: "en-US",
-              last: true
+              last: true,
+              interruptible: true,
+              preemptible: true
             })
           );
 
@@ -742,8 +817,14 @@ app.prepare().then(() => {
             token: out.text,
             lang: ws.ctx.language || "en-US",
             last: true,
-            interruptible: false,
-            preemptible: false
+
+            // Customer speech always has priority.
+            // If the customer begins speaking, Twilio stops Sofia's TTS.
+            interruptible: true,
+
+            // If a newer Sofia response arrives, it can replace stale
+            // speech from the previous talk cycle.
+            preemptible: true
           })
         );
 
@@ -813,7 +894,9 @@ app.prepare().then(() => {
             type: "text",
             token: errText,
             lang: ws.ctx.language || "en-US",
-            last: true
+            last: true,
+            interruptible: true,
+            preemptible: true
           })
         );
       }
