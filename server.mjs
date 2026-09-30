@@ -56,15 +56,20 @@ Do not mechanically recite these steps. Have a natural conversation.
 
 OUTBOUND SALES:
 For outbound calls, Sofia is the salesperson and must confidently lead the conversation.
-A friendly opening such as asking how the prospect is doing is fine, but it is only a brief courtesy.
-When the prospect answers with something such as "good", "fine", "I'm good", "doing well", or another ordinary response, immediately and naturally continue with the business reason for the call.
-Do not wait for the prospect to ask what the call is about.
-Do not respond to "I'm good" with another generic small-talk question.
-Briefly explain that you are calling from WebLynxForge and connect the call to the prospect's business website or online presence.
-Then ask one relevant discovery question, such as whether the business currently has a website.
-Be proactive and confidently lead the conversation.
-Give the prospect a compelling reason to continue talking before discussing price.
-Ask useful discovery questions instead of immediately giving a generic sales pitch.
+Do NOT open by asking "How are you?", "How are you doing today?", or another generic courtesy question.
+Do NOT lead with the $99 price.
+Use a direct, warm, professional opening that immediately gives the reason for the call.
+The preferred opening is:
+"Hi, this is Sofia from WebLynxForge. I'm calling because we help small businesses build and manage their professional website and online presence. I just wanted to briefly see if this is something that could help your business."
+Then ask one relevant discovery question, normally:
+"Do you currently have a website for your business?"
+After the prospect answers, actively lead the sales conversation instead of waiting for them to drive it.
+Be assertive and persistent in a polite, professional way. Sound warm, pleasant, encouraging, and naturally sweet without flirting or becoming unprofessional.
+Use short conversational responses. Build interest and value before discussing price unless the prospect directly asks for the price.
+If the prospect has a website, explore one or two legitimate gaps or management pain points rather than giving up.
+If the prospect does not have a website, explain the business value of having WebLynxForge manage it for them.
+Do not immediately dump a long feature list. Match benefits to what the prospect tells you.
+Ask for the sale when there is genuine interest, while respecting a clear refusal or do-not-call request.
 
 INBOUND SALES:
 For inbound calls, first understand why the customer called.
@@ -278,12 +283,21 @@ async function sendCheckoutLink(ctx) {
 }
 
 async function runAssistant(conversation, ctx) {
+  const modePrompt =
+    ctx?.callMode === "inbound"
+      ? "CALL MODE: INBOUND. The customer called WebLynxForge. Understand why they called, answer their need, and then sell naturally when relevant."
+      : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
+
   const response = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
     messages: [
       {
         role: "system",
         content: SYSTEM_PROMPT
+      },
+      {
+        role: "system",
+        content: modePrompt
       },
       ...conversation
     ],
@@ -293,7 +307,11 @@ async function runAssistant(conversation, ctx) {
     temperature: 0.7
   });
 
-  const msg = response.choices[0].message;
+  const msg = response?.choices?.[0]?.message;
+
+  if (!msg) {
+    throw new Error("OpenAI returned no assistant message.");
+  }
 
   if (!msg.tool_calls?.length) {
     return {
@@ -355,9 +373,15 @@ async function runAssistant(conversation, ctx) {
     temperature: 0.4
   });
 
+  const followMsg = follow?.choices?.[0]?.message;
+
+  if (!followMsg) {
+    throw new Error("OpenAI returned no follow-up assistant message.");
+  }
+
   return {
-    text: follow.choices[0].message.content || "Thank you.",
-    message: follow.choices[0].message
+    text: followMsg.content || "Thank you.",
+    message: followMsg
   };
 }
 
@@ -638,7 +662,15 @@ app.prepare().then(() => {
 
         console.log("Response:", out.text);
       } catch (err) {
-        console.error("Sofia error:", err);
+        console.error("Sofia error:", {
+          name: err?.name || "Error",
+          message: err?.message || String(err),
+          status: err?.status || null,
+          code: err?.code || null,
+          type: err?.type || null,
+          callSid: ws.callSid || null,
+          mode: ws.ctx.callMode || null
+        });
 
         const errText =
           ws.ctx.language === "es-MX"
