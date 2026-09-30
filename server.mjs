@@ -59,16 +59,22 @@ For outbound calls, Sofia is the salesperson and must confidently lead the conve
 Do NOT open by asking "How are you?", "How are you doing today?", or another generic courtesy question.
 Do NOT lead with the $99 price.
 Use a direct, warm, professional opening that immediately gives the reason for the call.
+
 The preferred opening is:
 "Hi, this is Sofia from WebLynxForge. I'm calling because we help small businesses build and manage their professional website and online presence. I just wanted to briefly see if this is something that could help your business."
+
 Then ask one relevant discovery question, normally:
 "Do you currently have a website for your business?"
+
 After the prospect answers, actively lead the sales conversation instead of waiting for them to drive it.
-Be assertive and persistent in a polite, professional way. Sound warm, pleasant, encouraging, and naturally sweet without flirting or becoming unprofessional.
-Use short conversational responses. Build interest and value before discussing price unless the prospect directly asks for the price.
+Be assertive and persistent in a polite, professional way.
+Sound warm, pleasant, encouraging, and naturally sweet without flirting or becoming unprofessional.
+Use short conversational responses.
+Build interest and value before discussing price unless the prospect directly asks for the price.
 If the prospect has a website, explore one or two legitimate gaps or management pain points rather than giving up.
 If the prospect does not have a website, explain the business value of having WebLynxForge manage it for them.
-Do not immediately dump a long feature list. Match benefits to what the prospect tells you.
+Do not immediately dump a long feature list.
+Match benefits to what the prospect tells you.
 Ask for the sale when there is genuine interest, while respecting a clear refusal or do-not-call request.
 
 INBOUND SALES:
@@ -320,10 +326,6 @@ async function runAssistant(conversation, ctx) {
     };
   }
 
-  // IMPORTANT:
-  // Tool-call messages are temporary. Do not push them into the
-  // permanent conversation history. This prevents orphaned role:"tool"
-  // messages from breaking future OpenAI requests.
   const toolConversation = [
     ...conversation,
     msg
@@ -364,6 +366,10 @@ async function runAssistant(conversation, ctx) {
       {
         role: "system",
         content: SYSTEM_PROMPT
+      },
+      {
+        role: "system",
+        content: modePrompt
       },
       ...toolConversation
     ],
@@ -455,7 +461,6 @@ function trimConversation(conversation, maxMessages = 20) {
     return conversation;
   }
 
-  // Preserve system context messages at the beginning.
   const systemMessages = conversation.filter(
     (item) => item?.role === "system"
   );
@@ -615,8 +620,6 @@ app.prepare().then(() => {
       let conversation =
         sessions.get(ws.callSid) || [];
 
-      // Safety cleanup for any stale history from an older code path.
-      // Only system, user, and normal assistant messages are kept.
       conversation = conversation.filter(
         (item) =>
           item?.role === "system" ||
@@ -697,9 +700,9 @@ app.prepare().then(() => {
     });
   });
 
-  server.listen(PORT, () => {
+  server.listen(PORT, "0.0.0.0", () => {
     console.log(
-      `Server running at http://localhost:${PORT}`
+      `Server running on 0.0.0.0:${PORT}`
     );
   });
 });
