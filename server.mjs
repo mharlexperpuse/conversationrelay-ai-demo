@@ -337,7 +337,7 @@ async function sendCheckoutLink(ctx) {
 async function runAssistant(conversation, ctx) {
   const modePrompt =
     ctx?.callMode === "inbound"
-      ? "CALL MODE: INBOUND. The customer called WebLynxForge. Understand why they called, answer their need, and then sell naturally when relevant."
+      ? `CALL MODE: INBOUND. Selected language: ${ctx?.language || "en"}. Selected department: ${ctx?.callCategory || "general"}. Continue in the caller's selected language, while naturally understanding code-switching. If department is support, focus on troubleshooting and gathering the issue; do not claim a support ticket was created unless a tool confirms it. If department is general, answer the inquiry without forcing a sales pitch. If department is sales_billing, handle WebLynxForge sales or billing questions naturally and do not invent account or billing facts.`
       : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
 
   const response = await openai.chat.completions.create({
@@ -472,68 +472,97 @@ async function runAssistant(conversation, ctx) {
   };
 }
 
-const LANGUAGE_MAP = {
-  "en-US": {
+const INBOUND_LANGUAGES = {
+  en: {
     label: "English",
-    ready: "Absolutely. How can I help you today?"
+    categoryPrompt: "Please say Sales or Billing, Support, or General Inquiry.",
+    introductions: {
+      sales_billing: "Hi, this is Sofia from WebLynxForge. How can I help you with Sales or Billing today?",
+      support: "Hi, this is Sofia from WebLynxForge Support. How can I help you today?",
+      general: "Hi, this is Sofia from WebLynxForge. How can I help you today?"
+    }
   },
-  "es-MX": {
-    label: "Mexican Spanish",
-    ready: "Claro. ¿Cómo puedo ayudarle hoy?"
+  es: {
+    label: "Español",
+    categoryPrompt: "Diga Ventas o Facturación, Soporte o Consulta General.",
+    introductions: {
+      sales_billing: "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con Ventas o Facturación?",
+      support: "Hola, soy Sofia del soporte de WebLynxForge. ¿Cómo puedo ayudarle hoy?",
+      general: "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle hoy?"
+    }
   },
-  "fil-PH": {
+  tl: {
     label: "Tagalog",
-    ready: "Sige. Paano kita matutulungan ngayon?"
+    categoryPrompt: "Sabihin lamang kung Sales o Billing, Support, o General Inquiry.",
+    introductions: {
+      sales_billing: "Hi, ako si Sofia mula sa WebLynxForge. Paano kita matutulungan sa Sales o Billing?",
+      support: "Hi, ako si Sofia mula sa WebLynxForge Support. Paano kita matutulungan ngayon?",
+      general: "Hi, ako si Sofia mula sa WebLynxForge. Paano kita matutulungan ngayon?"
+    }
   }
 };
 
-function requestedLanguage(text = "") {
-  const q = text.toLowerCase().trim();
+function requestedLanguage(text = "", detectedLang = "") {
+  const q = String(text).toLowerCase().trim();
+  if (/\b(tagalog|filipino|pilipino)\b/.test(q)) return "tl";
+  if (/\b(espa[nñ]ol|spanish|castellano)\b/.test(q)) return "es";
+  if (/\b(english|ingles|inglés)\b/.test(q)) return "en";
 
-  if (/\b(tagalog|filipino|pilipino)\b/.test(q)) {
-    return "fil-PH";
+  // Only use Twilio's detected language as a fallback after an actual utterance.
+  const d = String(detectedLang).toLowerCase();
+  if (d === "tl" || d === "fil") return "tl";
+  if (d === "es") return "es";
+  if (d === "en") return "en";
+  return "";
+}
+
+function requestedCategory(text = "") {
+  const q = String(text).toLowerCase().trim();
+
+  if (/\b(support|soporte|technical|tech support|help desk|bug|error|issue|problem|problema|not working|isn't working|doesn't work|broken|down|ayaw gumana|hindi gumagana|sira|tulong|website issue|site issue)\b/.test(q)) {
+    return "support";
   }
 
-  if (/\b(espa[nñ]ol|spanish|mexican|méxico|mexico)\b/.test(q)) {
-    return "es-MX";
+  if (/\b(sales|billing|ventas|facturaci[oó]n|invoice|payment|pricing|price|subscribe|subscription|buy|purchase|quote|quotation|bayad|billing|singil|presyo|magkano|bumili|website service)\b/.test(q)) {
+    return "sales_billing";
   }
 
-  if (/\b(english|ingles|inglés)\b/.test(q)) {
-    return "en-US";
+  if (/\b(general inquiry|general|inquiry|consulta general|consulta|question|tanong|katanungan|information|info)\b/.test(q)) {
+    return "general";
   }
 
   return "";
 }
 
-function switchLanguage(ws, code, announce = true) {
-  if (!LANGUAGE_MAP[code]) {
-    return false;
-  }
+function sendInboundText(ws, text) {
+  if (ws.readyState !== 1) return;
+  ws.send(JSON.stringify({
+    type: "text",
+    token: text,
+    lang: "multi",
+    last: true
+  }));
+}
 
-  ws.ctx.language = code;
+function selectInboundLanguage(ws, language) {
+  if (!INBOUND_LANGUAGES[language]) return false;
+  ws.ctx.language = language;
   ws.ctx.languageSelected = true;
+  ws.ctx.categorySelected = false;
+  ws.ctx.callCategory = "";
+  sendInboundText(ws, INBOUND_LANGUAGES[language].categoryPrompt);
+  console.log("Inbound language selected:", ws.callSid, language);
+  return true;
+}
 
-  ws.send(
-    JSON.stringify({
-      type: "language",
-      ttsLanguage: code,
-      transcriptionLanguage: code
-    })
-  );
-
-  if (announce) {
-    ws.send(
-      JSON.stringify({
-        type: "text",
-        token: LANGUAGE_MAP[code].ready,
-        lang: code,
-        last: true
-      })
-    );
-  }
-
-  console.log("Language switched:", ws.callSid, code);
-
+function selectInboundCategory(ws, category) {
+  const lang = INBOUND_LANGUAGES[ws.ctx.language] ? ws.ctx.language : "en";
+  const intro = INBOUND_LANGUAGES[lang].introductions[category];
+  if (!intro) return false;
+  ws.ctx.callCategory = category;
+  ws.ctx.categorySelected = true;
+  sendInboundText(ws, intro);
+  console.log("Inbound category selected:", ws.callSid, category);
   return true;
 }
 
@@ -568,7 +597,7 @@ function sendText(ws, text) {
     JSON.stringify({
       type: "text",
       token: text,
-      lang: ws.ctx.language || "en-US",
+      lang: ws.ctx.callMode === "inbound" ? "multi" : (ws.ctx.language || "en-US"),
       last: true
     })
   );
@@ -629,8 +658,10 @@ app.prepare().then(() => {
           closeEndpoint: cp.close_endpoint || "",
           closeToken: cp.close_token || "",
           callMode: cp.call_mode || "outbound",
-          language: "en-US",
-          languageSelected: cp.call_mode !== "inbound"
+          language: cp.call_mode === "inbound" ? "" : "en-US",
+          languageSelected: cp.call_mode !== "inbound",
+          categorySelected: cp.call_mode !== "inbound",
+          callCategory: cp.call_mode === "inbound" ? "" : "outbound_sales"
         };
 
         const context = [];
@@ -670,26 +701,6 @@ app.prepare().then(() => {
       }
 
       if (
-        message.type === "dtmf" &&
-        ws.ctx.callMode === "inbound"
-      ) {
-        const code =
-          message.digit === "1"
-            ? "en-US"
-            : message.digit === "2"
-              ? "es-MX"
-              : message.digit === "3"
-                ? "fil-PH"
-                : "";
-
-        if (code) {
-          switchLanguage(ws, code, true);
-        }
-
-        return;
-      }
-
-      if (
         message.type !== "prompt" ||
         !message.voicePrompt ||
         message.last === false
@@ -697,30 +708,24 @@ app.prepare().then(() => {
         return;
       }
 
-      const requested = requestedLanguage(
-        message.voicePrompt
-      );
-
-      if (
-        ws.ctx.callMode === "inbound" &&
-        (!ws.ctx.languageSelected || requested)
-      ) {
-        if (requested) {
-          switchLanguage(ws, requested, true);
+      if (ws.ctx.callMode === "inbound") {
+        if (!ws.ctx.languageSelected) {
+          const language = requestedLanguage(message.voicePrompt, message.lang || "");
+          if (language) {
+            selectInboundLanguage(ws, language);
+          } else {
+            sendInboundText(ws, "Please say English, Español, or Tagalog.");
+          }
           return;
         }
 
-        if (!ws.ctx.languageSelected) {
-          ws.send(
-            JSON.stringify({
-              type: "text",
-              token:
-                "Please say English, Español, or Tagalog. You can also press one, two, or three.",
-              lang: "en-US",
-              last: true
-            })
-          );
-
+        if (!ws.ctx.categorySelected) {
+          const category = requestedCategory(message.voicePrompt);
+          if (category) {
+            selectInboundCategory(ws, category);
+          } else {
+            sendInboundText(ws, INBOUND_LANGUAGES[ws.ctx.language].categoryPrompt);
+          }
           return;
         }
       }
