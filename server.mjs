@@ -55,7 +55,14 @@ Use this general sales progression naturally:
 Do not mechanically recite these steps. Have a natural conversation.
 
 OUTBOUND SALES:
-For outbound calls, be proactive and confidently lead the conversation.
+For outbound calls, Sofia is the salesperson and must confidently lead the conversation.
+A friendly opening such as asking how the prospect is doing is fine, but it is only a brief courtesy.
+When the prospect answers with something such as "good", "fine", "I'm good", "doing well", or another ordinary response, immediately and naturally continue with the business reason for the call.
+Do not wait for the prospect to ask what the call is about.
+Do not respond to "I'm good" with another generic small-talk question.
+Briefly explain that you are calling from WebLynxForge and connect the call to the prospect's business website or online presence.
+Then ask one relevant discovery question, such as whether the business currently has a website.
+Be proactive and confidently lead the conversation.
 Give the prospect a compelling reason to continue talking before discussing price.
 Ask useful discovery questions instead of immediately giving a generic sales pitch.
 
@@ -295,7 +302,14 @@ async function runAssistant(conversation, ctx) {
     };
   }
 
-  conversation.push(msg);
+  // IMPORTANT:
+  // Tool-call messages are temporary. Do not push them into the
+  // permanent conversation history. This prevents orphaned role:"tool"
+  // messages from breaking future OpenAI requests.
+  const toolConversation = [
+    ...conversation,
+    msg
+  ];
 
   for (const call of msg.tool_calls) {
     let result = {
@@ -319,7 +333,7 @@ async function runAssistant(conversation, ctx) {
             };
     }
 
-    conversation.push({
+    toolConversation.push({
       role: "tool",
       tool_call_id: call.id,
       content: JSON.stringify(result)
@@ -333,7 +347,7 @@ async function runAssistant(conversation, ctx) {
         role: "system",
         content: SYSTEM_PROMPT
       },
-      ...conversation
+      ...toolConversation
     ],
     tools,
     tool_choice: "none",
@@ -412,6 +426,33 @@ function switchLanguage(ws, code, announce = true) {
   return true;
 }
 
+function trimConversation(conversation, maxMessages = 20) {
+  if (conversation.length <= maxMessages) {
+    return conversation;
+  }
+
+  // Preserve system context messages at the beginning.
+  const systemMessages = conversation.filter(
+    (item) => item?.role === "system"
+  );
+
+  const normalMessages = conversation.filter(
+    (item) =>
+      item?.role === "user" ||
+      item?.role === "assistant"
+  );
+
+  const room = Math.max(
+    2,
+    maxMessages - systemMessages.length
+  );
+
+  return [
+    ...systemMessages,
+    ...normalMessages.slice(-room)
+  ];
+}
+
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
@@ -483,7 +524,9 @@ app.prepare().then(() => {
           "Setup for call:",
           ws.callSid,
           "lead:",
-          ws.ctx.leadId || "none"
+          ws.ctx.leadId || "none",
+          "mode:",
+          ws.ctx.callMode
         );
 
         return;
@@ -545,8 +588,18 @@ app.prepare().then(() => {
         }
       }
 
-      const conversation =
+      let conversation =
         sessions.get(ws.callSid) || [];
+
+      // Safety cleanup for any stale history from an older code path.
+      // Only system, user, and normal assistant messages are kept.
+      conversation = conversation.filter(
+        (item) =>
+          item?.role === "system" ||
+          item?.role === "user" ||
+          (item?.role === "assistant" &&
+            !item?.tool_calls)
+      );
 
       conversation.push({
         role: "user",
@@ -564,9 +617,10 @@ app.prepare().then(() => {
           content: out.text
         });
 
-        while (conversation.length > 20) {
-          conversation.shift();
-        }
+        conversation = trimConversation(
+          conversation,
+          20
+        );
 
         sessions.set(
           ws.callSid,
@@ -588,10 +642,10 @@ app.prepare().then(() => {
 
         const errText =
           ws.ctx.language === "es-MX"
-            ? "Lo siento, hubo un breve problema de conexión. ¿Puede repetirlo?"
+            ? "Lo siento, hubo un breve problema. ¿Puede repetirlo?"
             : ws.ctx.language === "fil-PH"
-              ? "Paumanhin, nagkaroon ng saglit na problema sa koneksyon. Maaari mo bang ulitin?"
-              : "I'm sorry, I had a brief connection problem. Could you say that again?";
+              ? "Paumanhin, nagkaroon ng saglit na problema. Maaari mo bang ulitin?"
+              : "I'm sorry, I had a brief problem. Could you say that again?";
 
         ws.send(
           JSON.stringify({
