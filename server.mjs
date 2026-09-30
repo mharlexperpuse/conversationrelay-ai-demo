@@ -28,10 +28,10 @@ Be assertive and persistent in sales, but never rude, deceptive, argumentative, 
 Listen carefully to the customer and adapt the conversation to what they actually say.
 
 LANGUAGE:
-The caller may use English, Mexican Spanish, or Tagalog/Filipino.
+The caller may use English or Mexican Spanish.
 Once the caller chooses a language, speak naturally in that language.
-Do not translate every sentence into all three languages.
-If the caller asks to change language later, continue in the newly requested language.
+Do not translate every sentence into both languages.
+If the caller asks to change between English and Spanish later, continue in the newly requested language.
 
 CORE SALES STRATEGY:
 Your goal is to professionally convert qualified prospects into WebLynxForge customers.
@@ -56,15 +56,13 @@ Do not mechanically recite these steps. Have a natural conversation.
 
 OUTBOUND SALES:
 For outbound calls, Sofia is the salesperson and must confidently lead the conversation.
-Do NOT open by asking "How are you?", "How are you doing today?", or another generic courtesy question.
+IMPORTANT: Twilio ConversationRelay has ALREADY spoken Sofia's complete outbound opening and the first discovery question before the customer's first response. Therefore, after the customer answers, NEVER introduce yourself again, NEVER say "Hi, this is Sofia from WebLynxForge" again, and NEVER repeat the opening or the question "Do you currently have a website for your business?" unless the customer explicitly asks who is calling or asks you to repeat it.
+Treat the customer's first transcribed response as an answer to the already-spoken opening/discovery question and continue naturally from that answer.
+Do NOT open again by asking "How are you?", "How are you doing today?", or another generic courtesy question.
 Do NOT lead with the $99 price.
-Use a direct, warm, professional opening that immediately gives the reason for the call.
 
-The preferred opening is:
-"Hi, this is Sofia from WebLynxForge. I'm calling because we help small businesses build and manage their professional website and online presence. I just wanted to briefly see if this is something that could help your business."
-
-Then ask one relevant discovery question, normally:
-"Do you currently have a website for your business?"
+The Twilio opening that has already been spoken is:
+"Hi, this is Sofia from WebLynxForge. I'm calling because we help small businesses build and manage their professional website and online presence. I just wanted to briefly see if this is something that could help your business. Do you currently have a website for your business?"
 
 After the prospect answers, actively lead the sales conversation instead of waiting for them to drive it.
 Be assertive and persistent in a polite, professional way.
@@ -160,6 +158,23 @@ Do not describe the included basic SEO as a full-scale SEO campaign, paid advert
 Never guarantee a particular Google ranking, first-page placement, number-one search position, amount of website traffic, number of leads, number of customers, revenue, or sales.
 
 Google controls its own verification, search results, and ranking systems.
+
+WEBLYNXFORGE CALL CENTER SERVICE:
+WebLynxForge also offers an AI-powered business call center system.
+
+When relevant to the customer's needs, explain that WebLynxForge can provide a website together with a call center system. The call center can be configured for business use cases such as:
+- Answering inbound customer calls
+- Handling common business questions
+- Routing callers by purpose, such as Sales or Billing, Support, or General Inquiry
+- Helping qualify sales leads
+- Assisting with outbound business follow-up calls
+- Supporting a business website and phone workflow together
+
+Do not force the call center offer into every conversation. Mention it naturally when the prospect asks about phone support, customer service, lead follow-up, appointment or sales calls, inbound calls, outbound calls, or asks what other WebLynxForge services are available.
+
+If a prospect is interested in both, you may explain that WebLynxForge can set up a managed website with a call center system so the business can have its online presence and phone workflow working together.
+
+Do not invent a price for the call center service. The $99/month price below applies to the managed website service, not automatically to the call center system. If asked for call center pricing and no confirmed pricing is available, explain that call center pricing depends on the required setup and usage.
 
 PRICE:
 The complete WebLynxForge managed service is $99 per month.
@@ -335,10 +350,22 @@ async function sendCheckoutLink(ctx) {
 }
 
 async function runAssistant(conversation, ctx) {
+  const inboundLanguage =
+    ctx?.language === "es" ? "Spanish" : "English";
+
+  const inboundCategory =
+    ctx?.category === "sales_billing"
+      ? "Sales/Billing"
+      : ctx?.category === "support"
+        ? "Support"
+        : ctx?.category === "general"
+          ? "General Inquiry"
+          : "Unspecified";
+
   const modePrompt =
     ctx?.callMode === "inbound"
-      ? `CALL MODE: INBOUND. Selected language: ${ctx?.language || "en"}. Selected department: ${ctx?.callCategory || "general"}. Continue in the caller's selected language, while naturally understanding code-switching. If department is support, focus on troubleshooting and gathering the issue; do not claim a support ticket was created unless a tool confirms it. If department is general, answer the inquiry without forcing a sales pitch. If department is sales_billing, handle WebLynxForge sales or billing questions naturally and do not invent account or billing facts.`
-      : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
+      ? `CALL MODE: INBOUND. The customer called WebLynxForge. The caller selected ${inboundLanguage}. Speak naturally in that language unless the caller clearly asks to change. The caller selected ${inboundCategory}. Handle that category first. For Support, focus on understanding and resolving or documenting the support need; do not turn the caller into a sales lead merely because they called. For General Inquiry, answer the inquiry without forcing a sales pitch. For Sales/Billing, handle sales or billing appropriately and sell naturally when relevant.`
+      : "CALL MODE: OUTBOUND SALES. Twilio already spoke the full Sofia introduction, business reason, and first website discovery question before the prospect's first response. Do NOT introduce Sofia again and do NOT repeat that opening. Treat the prospect's message as their response to the already-spoken opening, then continue directly with concise discovery and value-based selling. Do not ask generic courtesy questions. Do not lead with price.";
 
   const response = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
@@ -472,98 +499,138 @@ async function runAssistant(conversation, ctx) {
   };
 }
 
-const INBOUND_LANGUAGES = {
+const LANGUAGE_MAP = {
   en: {
     label: "English",
-    categoryPrompt: "Please say Sales or Billing, Support, or General Inquiry.",
-    introductions: {
-      sales_billing: "Hi, this is Sofia from WebLynxForge. How can I help you with Sales or Billing today?",
-      support: "Hi, this is Sofia from WebLynxForge Support. How can I help you today?",
-      general: "Hi, this is Sofia from WebLynxForge. How can I help you today?"
-    }
+    code: "en-US",
+    categoryPrompt:
+      "How can I help you today? Please say Sales or Billing, Support, or General Inquiry."
   },
   es: {
     label: "Español",
-    categoryPrompt: "Diga Ventas o Facturación, Soporte o Consulta General.",
-    introductions: {
-      sales_billing: "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con Ventas o Facturación?",
-      support: "Hola, soy Sofia del soporte de WebLynxForge. ¿Cómo puedo ayudarle hoy?",
-      general: "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle hoy?"
-    }
-  },
-  tl: {
-    label: "Tagalog",
-    categoryPrompt: "Sabihin lamang kung Sales o Billing, Support, o General Inquiry.",
-    introductions: {
-      sales_billing: "Hi, ako si Sofia mula sa WebLynxForge. Paano kita matutulungan sa Sales o Billing?",
-      support: "Hi, ako si Sofia mula sa WebLynxForge Support. Paano kita matutulungan ngayon?",
-      general: "Hi, ako si Sofia mula sa WebLynxForge. Paano kita matutulungan ngayon?"
-    }
+    code: "es-MX",
+    categoryPrompt:
+      "¿Cómo puedo ayudarle hoy? Diga Ventas o Facturación, Soporte o Consulta General."
   }
 };
 
-function requestedLanguage(text = "", detectedLang = "") {
-  const q = String(text).toLowerCase().trim();
-  if (/\b(tagalog|filipino|pilipino)\b/.test(q)) return "tl";
-  if (/\b(espa[nñ]ol|spanish|castellano)\b/.test(q)) return "es";
-  if (/\b(english|ingles|inglés)\b/.test(q)) return "en";
+const CATEGORY_MAP = {
+  sales_billing: {
+    en: "Hi, this is Sofia from WebLynxForge. How can I help you with Sales or Billing today?",
+    es: "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con Ventas o Facturación hoy?"
+  },
+  support: {
+    en: "Hi, this is Sofia from WebLynxForge Support. How can I help you today?",
+    es: "Hola, soy Sofia de Soporte de WebLynxForge. ¿Cómo puedo ayudarle hoy?"
+  },
+  general: {
+    en: "Hi, this is Sofia from WebLynxForge. How can I help you today?",
+    es: "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle hoy?"
+  }
+};
 
-  // Only use Twilio's detected language as a fallback after an actual utterance.
-  const d = String(detectedLang).toLowerCase();
-  if (d === "tl" || d === "fil") return "tl";
-  if (d === "es") return "es";
-  if (d === "en") return "en";
+function requestedLanguage(text = "") {
+  const q = text.toLowerCase().trim();
+
+  if (/\b(espa[nñ]ol|spanish|castellano)\b/.test(q)) {
+    return "es";
+  }
+
+  if (/\b(english|ingles|inglés)\b/.test(q)) {
+    return "en";
+  }
+
   return "";
 }
 
 function requestedCategory(text = "") {
-  const q = String(text).toLowerCase().trim();
+  const q = text.toLowerCase().trim();
 
-  if (/\b(support|soporte|technical|tech support|help desk|bug|error|issue|problem|problema|not working|isn't working|doesn't work|broken|down|ayaw gumana|hindi gumagana|sira|tulong|website issue|site issue)\b/.test(q)) {
-    return "support";
-  }
-
-  if (/\b(sales|billing|ventas|facturaci[oó]n|invoice|payment|pricing|price|subscribe|subscription|buy|purchase|quote|quotation|bayad|billing|singil|presyo|magkano|bumili|website service)\b/.test(q)) {
+  if (
+    /\b(sales|billing|sale|bill|payment|payments|invoice|invoices|ventas|venta|facturaci[oó]n|factura|pago|pagos)\b/.test(q)
+  ) {
     return "sales_billing";
   }
 
-  if (/\b(general inquiry|general|inquiry|consulta general|consulta|question|tanong|katanungan|information|info)\b/.test(q)) {
+  if (
+    /\b(support|technical support|tech support|soporte|ayuda t[eé]cnica|tulong|problema|problem|issue|website issue)\b/.test(q)
+  ) {
+    return "support";
+  }
+
+  if (
+    /\b(general inquiry|general question|inquiry|question|consulta general|consulta|pregunta|tanong|katanungan|general)\b/.test(q)
+  ) {
     return "general";
   }
 
   return "";
 }
 
-function sendInboundText(ws, text) {
-  if (ws.readyState !== 1) return;
+function selectLanguage(ws, code) {
+  if (!LANGUAGE_MAP[code]) {
+    return false;
+  }
+
+  const locale = LANGUAGE_MAP[code].code;
+
+  ws.ctx.language = code;
+  ws.ctx.languageSelected = true;
+  ws.ctx.category = "";
+  ws.ctx.categorySelected = false;
+
+  ws.send(JSON.stringify({
+    type: "language",
+    ttsLanguage: locale,
+    transcriptionLanguage: locale
+  }));
+
   ws.send(JSON.stringify({
     type: "text",
-    token: text,
-    lang: "multi",
+    token: LANGUAGE_MAP[code].categoryPrompt,
+    lang: locale,
     last: true
   }));
-}
 
-function selectInboundLanguage(ws, language) {
-  if (!INBOUND_LANGUAGES[language]) return false;
-  ws.ctx.language = language;
-  ws.ctx.languageSelected = true;
-  ws.ctx.categorySelected = false;
-  ws.ctx.callCategory = "";
-  sendInboundText(ws, INBOUND_LANGUAGES[language].categoryPrompt);
-  console.log("Inbound language selected:", ws.callSid, language);
+  console.log("Inbound language selected:", ws.callSid, code, locale);
   return true;
 }
 
-function selectInboundCategory(ws, category) {
-  const lang = INBOUND_LANGUAGES[ws.ctx.language] ? ws.ctx.language : "en";
-  const intro = INBOUND_LANGUAGES[lang].introductions[category];
-  if (!intro) return false;
-  ws.ctx.callCategory = category;
+function selectCategory(ws, category) {
+  if (!CATEGORY_MAP[category]) {
+    return false;
+  }
+
+  const language = LANGUAGE_MAP[ws.ctx.language]
+    ? ws.ctx.language
+    : "en";
+
+  ws.ctx.category = category;
   ws.ctx.categorySelected = true;
-  sendInboundText(ws, intro);
-  console.log("Inbound category selected:", ws.callSid, category);
+
+  ws.send(
+    JSON.stringify({
+      type: "text",
+      token: CATEGORY_MAP[category][language],
+      lang: LANGUAGE_MAP[language].code,
+      last: true
+    })
+  );
+
+  console.log(
+    "Inbound category selected:",
+    ws.callSid,
+    category,
+    "language:",
+    language
+  );
+
   return true;
+}
+
+function categoryRetryPrompt(language) {
+  return LANGUAGE_MAP[language]?.categoryPrompt ||
+    LANGUAGE_MAP.en.categoryPrompt;
 }
 
 function trimConversation(conversation, maxMessages = 20) {
@@ -597,7 +664,9 @@ function sendText(ws, text) {
     JSON.stringify({
       type: "text",
       token: text,
-      lang: ws.ctx.callMode === "inbound" ? "multi" : (ws.ctx.language || "en-US"),
+      lang: ws.ctx.callMode === "inbound"
+      ? (LANGUAGE_MAP[ws.ctx.language]?.code || "en-US")
+      : (ws.ctx.language || "en-US"),
       last: true
     })
   );
@@ -660,8 +729,8 @@ app.prepare().then(() => {
           callMode: cp.call_mode || "outbound",
           language: cp.call_mode === "inbound" ? "" : "en-US",
           languageSelected: cp.call_mode !== "inbound",
-          categorySelected: cp.call_mode !== "inbound",
-          callCategory: cp.call_mode === "inbound" ? "" : "outbound_sales"
+          category: "",
+          categorySelected: cp.call_mode !== "inbound"
         };
 
         const context = [];
@@ -710,22 +779,66 @@ app.prepare().then(() => {
 
       if (ws.ctx.callMode === "inbound") {
         if (!ws.ctx.languageSelected) {
-          const language = requestedLanguage(message.voicePrompt, message.lang || "");
+          const language = requestedLanguage(message.voicePrompt);
+
           if (language) {
-            selectInboundLanguage(ws, language);
+            selectLanguage(ws, language);
           } else {
-            sendInboundText(ws, "Please say English, Español, or Tagalog.");
+            ws.send(
+              JSON.stringify({
+                type: "text",
+                token:
+                  "Please say English or Español.",
+                lang: "en-US",
+                last: true
+              })
+            );
           }
+
           return;
         }
 
         if (!ws.ctx.categorySelected) {
           const category = requestedCategory(message.voicePrompt);
+
           if (category) {
-            selectInboundCategory(ws, category);
+            selectCategory(ws, category);
           } else {
-            sendInboundText(ws, INBOUND_LANGUAGES[ws.ctx.language].categoryPrompt);
+            ws.send(
+              JSON.stringify({
+                type: "text",
+                token: categoryRetryPrompt(ws.ctx.language),
+                lang: LANGUAGE_MAP[ws.ctx.language]?.code || "en-US",
+                last: true
+              })
+            );
           }
+
+          return;
+        }
+
+        const languageChange = requestedLanguage(message.voicePrompt);
+
+        if (languageChange && languageChange !== ws.ctx.language) {
+          const locale = LANGUAGE_MAP[languageChange].code;
+          ws.ctx.language = languageChange;
+
+          ws.send(JSON.stringify({
+            type: "language",
+            ttsLanguage: locale,
+            transcriptionLanguage: locale
+          }));
+
+          ws.send(JSON.stringify({
+            type: "text",
+            token:
+              languageChange === "es"
+                ? "Claro. Continuemos en español. ¿Cómo puedo ayudarle?"
+                : "Absolutely. Let's continue in English. How can I help you?",
+            lang: locale,
+            last: true
+          }));
+
           return;
         }
       }
@@ -799,9 +912,9 @@ app.prepare().then(() => {
         });
 
         const errText =
-          ws.ctx.language === "es-MX"
+          ws.ctx.language === "es"
             ? "Lo siento, hubo un breve problema. ¿Puede repetirlo?"
-            : ws.ctx.language === "fil-PH"
+            : ws.ctx.language === "tl"
               ? "Paumanhin, nagkaroon ng saglit na problema. Maaari mo bang ulitin?"
               : "I'm sorry, I had a brief problem. Could you say that again?";
 
@@ -809,7 +922,9 @@ app.prepare().then(() => {
           JSON.stringify({
             type: "text",
             token: errText,
-            lang: ws.ctx.language || "en-US",
+            lang: ws.ctx.callMode === "inbound"
+      ? (LANGUAGE_MAP[ws.ctx.language]?.code || "en-US")
+      : (ws.ctx.language || "en-US"),
             last: true
           })
         );
