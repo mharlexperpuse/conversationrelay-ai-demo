@@ -242,6 +242,16 @@ Before ending, say one short, polite, natural final closing sentence appropriate
 Then call the end_call tool.
 Do not tell the customer about the tool, WebSocket, Twilio, or technical hang-up process.
 
+SUPPORT TICKETS:
+For INBOUND calls, an existing WebLynxForge customer who reports a problem with their existing website or WebLynxForge service should be handled as support, not as a new sales lead.
+If the caller asks for support or asks to create a support ticket, first collect and confirm these three items: the caller's name, the website/project name, and a concise description of the problem.
+Do not ask for information that is not needed to understand the support issue.
+After the caller confirms those details, call the create_support_ticket tool.
+Only tell the caller that a support ticket was created when the tool returns ok=true and an actual ticket_number.
+Read the returned ticket number naturally to the caller.
+If ticket creation fails, do not invent a ticket number. Apologize briefly and offer a live transfer to the web developer instead.
+Do not silently convert a support caller into a Sales Lead.
+
 LIVE WEB DEVELOPER TRANSFER:
 For INBOUND calls only, if the caller clearly asks to speak with the web developer, a human, or the person who builds the websites, acknowledge the request and offer an immediate live transfer.
 If the caller confirms they want the transfer now, call the transfer_to_developer tool.
@@ -275,6 +285,39 @@ const tools = [
           }
         },
         required: ["sms_consent_confirmed"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_support_ticket",
+      description:
+        "Create a real WebLynxForge support ticket for an inbound existing-customer support issue. Use only after Sofia has collected and confirmed the caller name, website/project name, and concise problem description.",
+      parameters: {
+        type: "object",
+        properties: {
+          caller_name: { type: "string" },
+          project_name: { type: "string" },
+          concern: { type: "string" },
+          category: {
+            type: "string",
+            enum: [
+              "website_issue",
+              "domain_dns",
+              "billing",
+              "email",
+              "other"
+            ]
+          }
+        },
+        required: [
+          "caller_name",
+          "project_name",
+          "concern",
+          "category"
+        ],
         additionalProperties: false
       }
     }
@@ -380,6 +423,51 @@ async function sendCheckoutLink(ctx) {
     data = {
       ok: false,
       error: "invalid_close_response"
+    };
+  }
+
+  return {
+    http_status: res.status,
+    ...data
+  };
+}
+
+async function createSupportTicket(ctx, args) {
+  if (
+    ctx?.callMode !== "inbound" ||
+    !ctx?.callSid ||
+    !ctx?.supportEndpoint ||
+    !ctx?.supportToken
+  ) {
+    return {
+      ok: false,
+      error: "support_context_unavailable"
+    };
+  }
+
+  const res = await fetch(ctx.supportEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      call_sid: ctx.callSid,
+      support_token: ctx.supportToken,
+      caller_name: String(args?.caller_name || "").trim(),
+      project_name: String(args?.project_name || "").trim(),
+      concern: String(args?.concern || "").trim(),
+      category: String(args?.category || "other").trim()
+    })
+  });
+
+  let data = {};
+
+  try {
+    data = await res.json();
+  } catch {
+    data = {
+      ok: false,
+      error: "invalid_support_response"
     };
   }
 
@@ -499,6 +587,16 @@ async function runAssistant(conversation, ctx) {
               ok: false,
               error: "sms_consent_not_confirmed"
             };
+    }
+
+    if (call.function?.name === "create_support_ticket") {
+      let args = {};
+
+      try {
+        args = JSON.parse(call.function.arguments || "{}");
+      } catch {}
+
+      result = await createSupportTicket(ctx, args);
     }
 
     if (call.function?.name === "transfer_to_developer") {
@@ -829,6 +927,7 @@ app.prepare().then(() => {
 
         ws.ctx = {
           leadId: cp.lead_id || "",
+          callSid: message.callSid || "",
           calledPhone: cp.called_phone || "",
           businessName: cp.business_name || "",
           contactName: cp.contact_name || "",
@@ -839,6 +938,8 @@ app.prepare().then(() => {
           parentCallSid: cp.parent_call_sid || "",
           callbackEndpoint: cp.callback_endpoint || "",
           callbackToken: cp.callback_token || "",
+          supportEndpoint: cp.support_endpoint || "",
+          supportToken: cp.support_token || "",
           language: "en-US",
           languageSelected: cp.call_mode !== "inbound"
         };
