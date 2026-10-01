@@ -645,6 +645,68 @@ function requestedLanguage(text = "") {
   return "";
 }
 
+function isExplicitLiveTransferRequest(text = "", ctx = {}) {
+  if (
+    ctx?.callMode !== "inbound" ||
+    ctx?.transferFailed === true
+  ) {
+    return false;
+  }
+
+  const q = String(text)
+    .toLowerCase()
+    .replace(/[’']/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!q) {
+    return false;
+  }
+
+  // Do not trigger on an explicit refusal or negated transfer request.
+  if (
+    /\b(?:do not|don't|dont|no need to|never)\b.{0,40}\b(?:transfer|connect|speak|talk)\b/.test(q)
+  ) {
+    return false;
+  }
+
+  const asksForPerson =
+    /\b(?:web\s*developer|developer|human|real person|representative|live agent|person who (?:builds?|makes?) (?:the )?websites?|website (?:builder|developer))\b/.test(q);
+
+  const asksToConnect =
+    /\b(?:transfer|connect|put me through|speak|talk|talking|let me speak|let me talk|can i speak|could i speak|may i speak|want to speak|want to talk|need to speak|need to talk)\b/.test(q);
+
+  return asksForPerson && asksToConnect;
+}
+
+function startDeterministicDeveloperTransfer(ws) {
+  const text =
+    ws.ctx.language === "es-MX"
+      ? "Claro. Le conectaré con nuestro desarrollador web ahora."
+      : "Sure. I'll connect you with our web developer now.";
+
+  sendText(ws, text);
+
+  console.log(
+    "Deterministic live transfer intent detected:",
+    ws.callSid
+  );
+  console.log(
+    "Handing ConversationRelay to live developer transfer:",
+    ws.callSid
+  );
+
+  // Give ConversationRelay a brief moment to accept the final spoken line,
+  // then end the AI session with the handoff Twilio expects.
+  setTimeout(() => {
+    endConversationRelay(
+      ws,
+      "caller_requested_web_developer",
+      "live-agent-handoff"
+    );
+  }, 600);
+}
+
 function switchLanguage(ws, code, announce = true) {
   if (!LANGUAGE_MAP[code]) {
     return false;
@@ -877,6 +939,20 @@ app.prepare().then(() => {
 
           return;
         }
+      }
+
+      // Live-transfer requests are a deterministic call-control action.
+      // Do not rely on the LLM to choose the transfer tool: if an inbound
+      // caller explicitly asks to speak with the developer/human, perform
+      // the Twilio ConversationRelay handoff immediately.
+      if (
+        isExplicitLiveTransferRequest(
+          message.voicePrompt,
+          ws.ctx
+        )
+      ) {
+        startDeterministicDeveloperTransfer(ws);
+        return;
       }
 
       let conversation =
