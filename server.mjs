@@ -704,7 +704,7 @@ function startDeterministicDeveloperTransfer(ws) {
       "caller_requested_web_developer",
       "live-agent-handoff"
     );
-  }, 600);
+  }, 3200);
 }
 
 function switchLanguage(ws, code, announce = true) {
@@ -1008,7 +1008,7 @@ app.prepare().then(() => {
               out.transferReason || "caller_requested_web_developer",
               "live-agent-handoff"
             );
-          }, 250);
+          }, 3200);
         } else if (out.endCall) {
           console.log(
             "Ending ConversationRelay cleanly:",
