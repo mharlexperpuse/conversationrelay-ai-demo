@@ -28,10 +28,10 @@ Be assertive and persistent in sales, but never rude, deceptive, argumentative, 
 Listen carefully to the customer and adapt the conversation to what they actually say.
 
 LANGUAGE:
-The caller may use English or Mexican Spanish.
+The caller may use English, Mexican Spanish, or Tagalog/Filipino.
 Once the caller chooses a language, speak naturally in that language.
-Do not translate every sentence into both languages.
-If the caller asks to change between English and Spanish later, continue in the newly requested language.
+Do not translate every sentence into all three languages.
+If the caller asks to change language later, continue in the newly requested language.
 
 CORE SALES STRATEGY:
 Your goal is to professionally convert qualified prospects into WebLynxForge customers.
@@ -56,13 +56,15 @@ Do not mechanically recite these steps. Have a natural conversation.
 
 OUTBOUND SALES:
 For outbound calls, Sofia is the salesperson and must confidently lead the conversation.
-IMPORTANT: Twilio ConversationRelay has ALREADY spoken Sofia's complete outbound opening and the first discovery question before the customer's first response. Therefore, after the customer answers, NEVER introduce yourself again, NEVER say "Hi, this is Sofia from WebLynxForge" again, and NEVER repeat the opening or the question "Do you currently have a website for your business?" unless the customer explicitly asks who is calling or asks you to repeat it.
-Treat the customer's first transcribed response as an answer to the already-spoken opening/discovery question and continue naturally from that answer.
-Do NOT open again by asking "How are you?", "How are you doing today?", or another generic courtesy question.
+Do NOT open by asking "How are you?", "How are you doing today?", or another generic courtesy question.
 Do NOT lead with the $99 price.
+Use a direct, warm, professional opening that immediately gives the reason for the call.
 
-The Twilio opening that has already been spoken is:
-"Hi, this is Sofia from WebLynxForge. I'm calling because we help small businesses build and manage their professional website and online presence. I just wanted to briefly see if this is something that could help your business. Do you currently have a website for your business?"
+The preferred opening is:
+"Hi, this is Sofia from WebLynxForge. I'm calling because we help small businesses build and manage their professional website and online presence. I just wanted to briefly see if this is something that could help your business."
+
+Then ask one relevant discovery question, normally:
+"Do you currently have a website for your business?"
 
 After the prospect answers, actively lead the sales conversation instead of waiting for them to drive it.
 Be assertive and persistent in a polite, professional way.
@@ -159,23 +161,6 @@ Never guarantee a particular Google ranking, first-page placement, number-one se
 
 Google controls its own verification, search results, and ranking systems.
 
-WEBLYNXFORGE CALL CENTER SERVICE:
-WebLynxForge also offers an AI-powered business call center system.
-
-When relevant to the customer's needs, explain that WebLynxForge can provide a website together with a call center system. The call center can be configured for business use cases such as:
-- Answering inbound customer calls
-- Handling common business questions
-- Routing callers by purpose, such as Sales or Billing, Support, or General Inquiry
-- Helping qualify sales leads
-- Assisting with outbound business follow-up calls
-- Supporting a business website and phone workflow together
-
-Do not force the call center offer into every conversation. Mention it naturally when the prospect asks about phone support, customer service, lead follow-up, appointment or sales calls, inbound calls, outbound calls, or asks what other WebLynxForge services are available.
-
-If a prospect is interested in both, you may explain that WebLynxForge can set up a managed website with a call center system so the business can have its online presence and phone workflow working together.
-
-Do not invent a price for the call center service. The $99/month price below applies to the managed website service, not automatically to the call center system. If asked for call center pricing and no confirmed pricing is available, explain that call center pricing depends on the required setup and usage.
-
 PRICE:
 The complete WebLynxForge managed service is $99 per month.
 
@@ -233,15 +218,13 @@ Only after the customer explicitly agrees to receive the text may you call the s
 
 Agreement to purchase the WebLynxForge service by itself is NOT SMS consent.
 
-After the tool reports a CONFIRMED successful SMS result, tell the customer that the secure WebLynxForge signup link was sent to their number.
-
-A successful SMS result means the tool returned ok=true, sent=true, a valid Twilio Message SID beginning with SM, and status checkout_sent or already_sent.
+After the tool reports checkout_sent or already_sent, tell the customer that the secure WebLynxForge signup link was sent to their number.
 
 Briefly explain that they will enter their information and website details, review them, continue to secure checkout, and after payment is confirmed choose their included domain.
 
-NEVER say or imply that an SMS was sent unless the send_checkout_link tool actually returned that confirmed successful result during this call.
+If the tool reports sms_not_enabled, do not claim that a text was sent.
 
-If the tool returns sms_not_enabled, missing_lead_context, invalid_close_response, close_endpoint_unreachable, sms_send_failed, previous_sms_status_unavailable, suppressed, twilio_sms_not_configured, or any other failure, do NOT claim that a text was sent. Tell the customer briefly that the text could not be confirmed or sent just now.
+Explain politely that the signup text service is not active yet.
 
 CALL ENDING AND HANG-UP:
 Sofia must recognize when the conversation is genuinely finished and end the call cleanly.
@@ -258,6 +241,19 @@ End the call when one of these is true:
 Before ending, say one short, polite, natural final closing sentence appropriate to the language and situation, such as thanking the customer for their time and wishing them a good day.
 Then call the end_call tool.
 Do not tell the customer about the tool, WebSocket, Twilio, or technical hang-up process.
+
+LIVE WEB DEVELOPER TRANSFER:
+For INBOUND calls only, if the caller clearly asks to speak with the web developer, a human, or the person who builds the websites, acknowledge the request and offer an immediate live transfer.
+If the caller confirms they want the transfer now, call the transfer_to_developer tool.
+Do not use the transfer tool merely because a prospect has an objection or asks a normal question that Sofia can answer.
+Do not claim that the developer answered until the transfer actually connects.
+
+If the live transfer was attempted but the developer did not answer, Sofia may resume the call. In that fallback state, apologize briefly and offer to create a developer callback request.
+Collect and confirm the caller's name, whether to use the same callback number or a different callback number, and a short description of what they need.
+If they want to use the same number they called from, callback_phone may be an empty string and the server will use the verified caller number already on the lead.
+Only after the caller confirms the callback details should you call request_developer_callback.
+Only tell the caller that the callback request was created if the tool reports success.
+Do not promise a specific callback time unless WebLynxForge has explicitly provided one.
 
 TRUTHFULNESS:
 Never invent facts about WebLynxForge, the customer's business, their current website, competitors, pricing, results, policies, domain availability, SEO results, or Google performance.
@@ -279,6 +275,48 @@ const tools = [
           }
         },
         required: ["sms_consent_confirmed"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "transfer_to_developer",
+      description:
+        "For an inbound call, end the Sofia ConversationRelay session with a live-agent handoff so Twilio can dial the WebLynxForge web developer. Use only after the caller clearly asks for the developer/human and confirms they want the transfer now.",
+      parameters: {
+        type: "object",
+        properties: {
+          final_message: {
+            type: "string",
+            description:
+              "One short sentence Sofia should say immediately before starting the live transfer."
+          }
+        },
+        required: ["final_message"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "request_developer_callback",
+      description:
+        "Save a developer callback request after a live transfer attempt was not answered. Use only after Sofia has collected and confirmed the caller name, callback-number preference, and concern.",
+      parameters: {
+        type: "object",
+        properties: {
+          caller_name: { type: "string" },
+          callback_phone: {
+            type: "string",
+            description:
+              "E.164 callback number, or an empty string when the caller confirms the same number they called from."
+          },
+          concern: { type: "string" }
+        },
+        required: ["caller_name", "callback_phone", "concern"],
         additionalProperties: false
       }
     }
@@ -315,106 +353,93 @@ const tools = [
   }
 ];
 
-function smsWasConfirmed(result) {
-  const status = String(result?.status || "").toLowerCase();
-  const sid = String(result?.message_sid || "");
-
-  return Boolean(
-    result?.ok === true &&
-    result?.sent === true &&
-    (status === "checkout_sent" || status === "already_sent") &&
-    /^SM[0-9a-fA-F]{32}$/.test(sid)
-  );
-}
-
-function textClaimsSmsWasSent(text = "") {
-  const q = String(text || "").toLowerCase();
-
-  return (
-    /\b(i|we)(?:'ve| have)?\s+(?:just\s+)?sent\b/.test(q) ||
-    /\b(i|we)\s+sent\b/.test(q) ||
-    /\b(?:signup|secure|checkout)?\s*(?:link|text|message)\s+(?:was|has been|is)\s+sent\b/.test(q) ||
-    /\btext\s+(?:was|has been|is)\s+sent\b/.test(q)
-  );
-}
-
-function smsFailureSpeech(ctx, result = {}) {
-  const language =
-    ctx?.language === "es-MX" || ctx?.language === "es"
-      ? "es"
-      : "en";
-
-  if (language === "es") {
-    return "Lo siento, no pude confirmar el envío del mensaje de texto en este momento. No voy a decir que fue enviado hasta que el sistema lo confirme.";
-  }
-
-  return "I'm sorry, I couldn't confirm that the text was sent just now. I won't say it was sent until the system confirms it.";
-}
-
 async function sendCheckoutLink(ctx) {
   if (!ctx?.leadId || !ctx?.closeToken || !ctx?.closeEndpoint) {
     return {
       ok: false,
-      sent: false,
       error: "missing_lead_context"
     };
   }
 
+  const res = await fetch(ctx.closeEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      lead_id: Number(ctx.leadId),
+      close_token: ctx.closeToken
+    })
+  });
+
+  let data = {};
+
   try {
-    const res = await fetch(ctx.closeEndpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        lead_id: Number(ctx.leadId),
-        close_token: ctx.closeToken
-      })
-    });
-
-    let data = {};
-
-    try {
-      data = await res.json();
-    } catch {
-      data = {
-        ok: false,
-        sent: false,
-        error: "invalid_close_response"
-      };
-    }
-
-    return {
-      http_status: res.status,
-      ...data
-    };
-  } catch (err) {
-    return {
+    data = await res.json();
+  } catch {
+    data = {
       ok: false,
-      sent: false,
-      error: "close_endpoint_unreachable",
-      message: err?.message || String(err)
+      error: "invalid_close_response"
     };
   }
+
+  return {
+    http_status: res.status,
+    ...data
+  };
+}
+
+async function saveDeveloperCallback(ctx, args) {
+  if (
+    !ctx?.transferFailed ||
+    !ctx?.leadId ||
+    !ctx?.parentCallSid ||
+    !ctx?.callbackEndpoint ||
+    !ctx?.callbackToken
+  ) {
+    return {
+      ok: false,
+      error: "callback_context_unavailable"
+    };
+  }
+
+  const res = await fetch(ctx.callbackEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      lead_id: Number(ctx.leadId),
+      call_sid: ctx.parentCallSid,
+      callback_token: ctx.callbackToken,
+      caller_name: String(args?.caller_name || "").trim(),
+      callback_phone: String(args?.callback_phone || "").trim(),
+      concern: String(args?.concern || "").trim()
+    })
+  });
+
+  let data = {};
+
+  try {
+    data = await res.json();
+  } catch {
+    data = {
+      ok: false,
+      error: "invalid_callback_response"
+    };
+  }
+
+  return {
+    http_status: res.status,
+    ...data
+  };
 }
 
 async function runAssistant(conversation, ctx) {
-  const inboundLanguage =
-    ctx?.language === "es" ? "Spanish" : "English";
-
-  const inboundCategory =
-    ctx?.category === "sales_billing"
-      ? "Sales/Billing"
-      : ctx?.category === "support"
-        ? "Support"
-        : ctx?.category === "general"
-          ? "General Inquiry"
-          : "Unspecified";
-
   const modePrompt =
     ctx?.callMode === "inbound"
-      ? `CALL MODE: INBOUND. The customer called WebLynxForge. The caller selected ${inboundLanguage}. Speak naturally in that language unless the caller clearly asks to change. The caller selected ${inboundCategory}. Handle that category first. For Support, focus on understanding and resolving or documenting the support need; do not turn the caller into a sales lead merely because they called. For General Inquiry, answer the inquiry without forcing a sales pitch. For Sales/Billing, handle sales or billing appropriately and sell naturally when relevant.`
-      : "CALL MODE: OUTBOUND SALES. Twilio already spoke the full Sofia introduction, business reason, and first website discovery question before the prospect's first response. Do NOT introduce Sofia again and do NOT repeat that opening. Treat the prospect's message as their response to the already-spoken opening, then continue directly with concise discovery and value-based selling. Do not ask generic courtesy questions. Do not lead with price.";
+      ? "CALL MODE: INBOUND. The customer called WebLynxForge. Understand why they called, answer their need, and then sell naturally when relevant."
+      : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
 
   const response = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
@@ -442,33 +467,8 @@ async function runAssistant(conversation, ctx) {
   }
 
   if (!msg.tool_calls?.length) {
-    const plainText =
-      msg.content || "Could you say that again?";
-
-    if (
-      textClaimsSmsWasSent(plainText) &&
-      ctx?.smsConfirmedThisCall !== true
-    ) {
-      console.warn("Blocked unconfirmed SMS success claim:", {
-        leadId: ctx?.leadId || null,
-        callMode: ctx?.callMode || null,
-        hasCloseEndpoint: Boolean(ctx?.closeEndpoint),
-        hasCloseToken: Boolean(ctx?.closeToken)
-      });
-
-      return {
-        text: smsFailureSpeech(ctx, {
-          ok: false,
-          sent: false,
-          error: "unconfirmed_sms_claim"
-        }),
-        message: msg,
-        endCall: false
-      };
-    }
-
     return {
-      text: plainText,
+      text: msg.content || "Could you say that again?",
       message: msg,
       endCall: false
     };
@@ -497,49 +497,47 @@ async function runAssistant(conversation, ctx) {
           ? await sendCheckoutLink(ctx)
           : {
               ok: false,
-              sent: false,
               error: "sms_consent_not_confirmed"
             };
+    }
 
-      const safeSmsLog = {
-        ok: result?.ok === true,
-        sent: result?.sent === true,
-        status: result?.status || null,
-        error: result?.error || null,
-        http_status: result?.http_status || null,
-        message_sid: result?.message_sid || null,
-        twilio_status: result?.twilio_status || null,
-        leadId: ctx?.leadId || null,
-        callMode: ctx?.callMode || null
-      };
+    if (call.function?.name === "transfer_to_developer") {
+      let args = {};
 
-      console.log("Sofia SMS tool result:", safeSmsLog);
+      try {
+        args = JSON.parse(call.function.arguments || "{}");
+      } catch {}
 
-      if (smsWasConfirmed(result)) {
-        ctx.smsConfirmedThisCall = true;
-
-        const successText =
-          ctx?.language === "es-MX" || ctx?.language === "es"
-            ? "Listo. El enlace seguro de registro de WebLynxForge fue enviado por mensaje de texto a su número."
-            : "Done. The secure WebLynxForge signup link was sent by text to your number.";
+      if (ctx?.callMode !== "inbound") {
+        result = {
+          ok: false,
+          error: "live_transfer_inbound_only"
+        };
+      } else {
+        const finalMessage =
+          typeof args.final_message === "string" &&
+          args.final_message.trim()
+            ? args.final_message.trim().slice(0, 300)
+            : "Certainly. I'll connect you with the web developer now.";
 
         return {
-          text: successText,
+          text: finalMessage,
           message: msg,
           endCall: false,
-          smsConfirmed: true
+          transferCall: true,
+          transferReason: "caller_requested_web_developer"
         };
       }
+    }
 
-      ctx.smsConfirmedThisCall = false;
+    if (call.function?.name === "request_developer_callback") {
+      let args = {};
 
-      return {
-        text: smsFailureSpeech(ctx, result),
-        message: msg,
-        endCall: false,
-        smsConfirmed: false,
-        smsError: result?.error || "sms_not_confirmed"
-      };
+      try {
+        args = JSON.parse(call.function.arguments || "{}");
+      } catch {}
+
+      result = await saveDeveloperCallback(ctx, args);
     }
 
     if (call.function?.name === "end_call") {
@@ -615,137 +613,68 @@ async function runAssistant(conversation, ctx) {
 }
 
 const LANGUAGE_MAP = {
-  en: {
+  "en-US": {
     label: "English",
-    code: "en-US",
-    categoryPrompt:
-      "How can I help you today? Please say Sales or Billing, Support, or General Inquiry."
+    ready: "Absolutely. How can I help you today?"
   },
-  es: {
-    label: "Español",
-    code: "es-MX",
-    categoryPrompt:
-      "¿Cómo puedo ayudarle hoy? Diga Ventas o Facturación, Soporte o Consulta General."
-  }
-};
-
-const CATEGORY_MAP = {
-  sales_billing: {
-    en: "Hi, this is Sofia from WebLynxForge. How can I help you with Sales or Billing today?",
-    es: "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con Ventas o Facturación hoy?"
+  "es-MX": {
+    label: "Mexican Spanish",
+    ready: "Claro. ¿Cómo puedo ayudarle hoy?"
   },
-  support: {
-    en: "Hi, this is Sofia from WebLynxForge Support. How can I help you today?",
-    es: "Hola, soy Sofia de Soporte de WebLynxForge. ¿Cómo puedo ayudarle hoy?"
-  },
-  general: {
-    en: "Hi, this is Sofia from WebLynxForge. How can I help you today?",
-    es: "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle hoy?"
+  "fil-PH": {
+    label: "Tagalog",
+    ready: "Sige. Paano kita matutulungan ngayon?"
   }
 };
 
 function requestedLanguage(text = "") {
   const q = text.toLowerCase().trim();
 
-  if (/\b(espa[nñ]ol|spanish|castellano)\b/.test(q)) {
-    return "es";
+  if (/\b(tagalog|filipino|pilipino)\b/.test(q)) {
+    return "fil-PH";
+  }
+
+  if (/\b(espa[nñ]ol|spanish|mexican|méxico|mexico)\b/.test(q)) {
+    return "es-MX";
   }
 
   if (/\b(english|ingles|inglés)\b/.test(q)) {
-    return "en";
+    return "en-US";
   }
 
   return "";
 }
 
-function requestedCategory(text = "") {
-  const q = text.toLowerCase().trim();
-
-  if (
-    /\b(sales|billing|sale|bill|payment|payments|invoice|invoices|ventas|venta|facturaci[oó]n|factura|pago|pagos)\b/.test(q)
-  ) {
-    return "sales_billing";
-  }
-
-  if (
-    /\b(support|technical support|tech support|soporte|ayuda t[eé]cnica|tulong|problema|problem|issue|website issue)\b/.test(q)
-  ) {
-    return "support";
-  }
-
-  if (
-    /\b(general inquiry|general question|inquiry|question|consulta general|consulta|pregunta|tanong|katanungan|general)\b/.test(q)
-  ) {
-    return "general";
-  }
-
-  return "";
-}
-
-function selectLanguage(ws, code) {
+function switchLanguage(ws, code, announce = true) {
   if (!LANGUAGE_MAP[code]) {
     return false;
   }
 
-  const locale = LANGUAGE_MAP[code].code;
-
   ws.ctx.language = code;
   ws.ctx.languageSelected = true;
-  ws.ctx.category = "";
-  ws.ctx.categorySelected = false;
-
-  ws.send(JSON.stringify({
-    type: "language",
-    ttsLanguage: locale,
-    transcriptionLanguage: locale
-  }));
-
-  ws.send(JSON.stringify({
-    type: "text",
-    token: LANGUAGE_MAP[code].categoryPrompt,
-    lang: locale,
-    last: true
-  }));
-
-  console.log("Inbound language selected:", ws.callSid, code, locale);
-  return true;
-}
-
-function selectCategory(ws, category) {
-  if (!CATEGORY_MAP[category]) {
-    return false;
-  }
-
-  const language = LANGUAGE_MAP[ws.ctx.language]
-    ? ws.ctx.language
-    : "en";
-
-  ws.ctx.category = category;
-  ws.ctx.categorySelected = true;
 
   ws.send(
     JSON.stringify({
-      type: "text",
-      token: CATEGORY_MAP[category][language],
-      lang: LANGUAGE_MAP[language].code,
-      last: true
+      type: "language",
+      ttsLanguage: code,
+      transcriptionLanguage: code
     })
   );
 
-  console.log(
-    "Inbound category selected:",
-    ws.callSid,
-    category,
-    "language:",
-    language
-  );
+  if (announce) {
+    ws.send(
+      JSON.stringify({
+        type: "text",
+        token: LANGUAGE_MAP[code].ready,
+        lang: code,
+        last: true
+      })
+    );
+  }
+
+  console.log("Language switched:", ws.callSid, code);
 
   return true;
-}
-
-function categoryRetryPrompt(language) {
-  return LANGUAGE_MAP[language]?.categoryPrompt ||
-    LANGUAGE_MAP.en.categoryPrompt;
 }
 
 function trimConversation(conversation, maxMessages = 20) {
@@ -779,15 +708,17 @@ function sendText(ws, text) {
     JSON.stringify({
       type: "text",
       token: text,
-      lang: ws.ctx.callMode === "inbound"
-      ? (LANGUAGE_MAP[ws.ctx.language]?.code || "en-US")
-      : (ws.ctx.language || "en-US"),
+      lang: ws.ctx.language || "en-US",
       last: true
     })
   );
 }
 
-function endConversationRelay(ws, reason) {
+function endConversationRelay(
+  ws,
+  reason,
+  reasonCode = "sofia-call-complete"
+) {
   if (ws.readyState !== 1) {
     return;
   }
@@ -796,7 +727,7 @@ function endConversationRelay(ws, reason) {
     JSON.stringify({
       type: "end",
       handoffData: JSON.stringify({
-        reasonCode: "sofia-call-complete",
+        reasonCode,
         reason: reason || "conversation_complete"
       })
     })
@@ -842,11 +773,12 @@ app.prepare().then(() => {
           closeEndpoint: cp.close_endpoint || "",
           closeToken: cp.close_token || "",
           callMode: cp.call_mode || "outbound",
-          language: cp.call_mode === "inbound" ? "" : "en-US",
-          languageSelected: cp.call_mode !== "inbound",
-          category: "",
-          categorySelected: cp.call_mode !== "inbound",
-          smsConfirmedThisCall: false
+          transferFailed: cp.transfer_failed === "1",
+          parentCallSid: cp.parent_call_sid || "",
+          callbackEndpoint: cp.callback_endpoint || "",
+          callbackToken: cp.callback_token || "",
+          language: "en-US",
+          languageSelected: cp.call_mode !== "inbound"
         };
 
         const context = [];
@@ -857,6 +789,12 @@ app.prepare().then(() => {
 
         if (ws.ctx.contactName) {
           context.push(`Contact: ${ws.ctx.contactName}`);
+        }
+
+        if (ws.ctx.transferFailed) {
+          context.push(
+            "The attempted live transfer to the web developer was not answered. Offer to create a developer callback request and collect/confirm the caller name, callback-number preference, and concern before using the callback tool."
+          );
         }
 
         sessions.set(
@@ -879,13 +817,28 @@ app.prepare().then(() => {
           "lead:",
           ws.ctx.leadId || "none",
           "mode:",
-          ws.ctx.callMode,
-          "smsContext:",
-          {
-            hasCloseEndpoint: Boolean(ws.ctx.closeEndpoint),
-            hasCloseToken: Boolean(ws.ctx.closeToken)
-          }
+          ws.ctx.callMode
         );
+
+        return;
+      }
+
+      if (
+        message.type === "dtmf" &&
+        ws.ctx.callMode === "inbound"
+      ) {
+        const code =
+          message.digit === "1"
+            ? "en-US"
+            : message.digit === "2"
+              ? "es-MX"
+              : message.digit === "3"
+                ? "fil-PH"
+                : "";
+
+        if (code) {
+          switchLanguage(ws, code, true);
+        }
 
         return;
       }
@@ -898,67 +851,29 @@ app.prepare().then(() => {
         return;
       }
 
-      if (ws.ctx.callMode === "inbound") {
+      const requested = requestedLanguage(
+        message.voicePrompt
+      );
+
+      if (
+        ws.ctx.callMode === "inbound" &&
+        (!ws.ctx.languageSelected || requested)
+      ) {
+        if (requested) {
+          switchLanguage(ws, requested, true);
+          return;
+        }
+
         if (!ws.ctx.languageSelected) {
-          const language = requestedLanguage(message.voicePrompt);
-
-          if (language) {
-            selectLanguage(ws, language);
-          } else {
-            ws.send(
-              JSON.stringify({
-                type: "text",
-                token:
-                  "Please say English or Español.",
-                lang: "en-US",
-                last: true
-              })
-            );
-          }
-
-          return;
-        }
-
-        if (!ws.ctx.categorySelected) {
-          const category = requestedCategory(message.voicePrompt);
-
-          if (category) {
-            selectCategory(ws, category);
-          } else {
-            ws.send(
-              JSON.stringify({
-                type: "text",
-                token: categoryRetryPrompt(ws.ctx.language),
-                lang: LANGUAGE_MAP[ws.ctx.language]?.code || "en-US",
-                last: true
-              })
-            );
-          }
-
-          return;
-        }
-
-        const languageChange = requestedLanguage(message.voicePrompt);
-
-        if (languageChange && languageChange !== ws.ctx.language) {
-          const locale = LANGUAGE_MAP[languageChange].code;
-          ws.ctx.language = languageChange;
-
-          ws.send(JSON.stringify({
-            type: "language",
-            ttsLanguage: locale,
-            transcriptionLanguage: locale
-          }));
-
-          ws.send(JSON.stringify({
-            type: "text",
-            token:
-              languageChange === "es"
-                ? "Claro. Continuemos en español. ¿Cómo puedo ayudarle?"
-                : "Absolutely. Let's continue in English. How can I help you?",
-            lang: locale,
-            last: true
-          }));
+          ws.send(
+            JSON.stringify({
+              type: "text",
+              token:
+                "Please say English, Español, or Tagalog. You can also press one, two, or three.",
+              lang: "en-US",
+              last: true
+            })
+          );
 
           return;
         }
@@ -1005,7 +920,20 @@ app.prepare().then(() => {
 
         console.log("Response:", out.text);
 
-        if (out.endCall) {
+        if (out.transferCall) {
+          console.log(
+            "Handing ConversationRelay to live developer transfer:",
+            ws.callSid
+          );
+
+          setTimeout(() => {
+            endConversationRelay(
+              ws,
+              out.transferReason || "caller_requested_web_developer",
+              "live-agent-handoff"
+            );
+          }, 250);
+        } else if (out.endCall) {
           console.log(
             "Ending ConversationRelay cleanly:",
             ws.callSid,
@@ -1033,9 +961,9 @@ app.prepare().then(() => {
         });
 
         const errText =
-          ws.ctx.language === "es"
+          ws.ctx.language === "es-MX"
             ? "Lo siento, hubo un breve problema. ¿Puede repetirlo?"
-            : ws.ctx.language === "tl"
+            : ws.ctx.language === "fil-PH"
               ? "Paumanhin, nagkaroon ng saglit na problema. Maaari mo bang ulitin?"
               : "I'm sorry, I had a brief problem. Could you say that again?";
 
@@ -1043,9 +971,7 @@ app.prepare().then(() => {
           JSON.stringify({
             type: "text",
             token: errText,
-            lang: ws.ctx.callMode === "inbound"
-      ? (LANGUAGE_MAP[ws.ctx.language]?.code || "en-US")
-      : (ws.ctx.language || "en-US"),
+            lang: ws.ctx.language || "en-US",
             last: true
           })
         );
