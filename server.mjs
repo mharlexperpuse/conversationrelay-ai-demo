@@ -578,13 +578,15 @@ async function saveDeveloperCallback(ctx, args) {
 
 async function runAssistant(conversation, ctx) {
   const modePrompt =
-    ctx?.callMode === "inbound"
-      ? (
-          ctx?.department === "agent_orientation"
-            ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan."
-            : `CALL MODE: INBOUND. The caller selected the ${ctx?.department || "general"} department. Handle that purpose first, answer their need, and sell naturally only when relevant.`
-        )
-      : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
+    ctx?.callMode === "agent_orientation"
+      ? "CALL MODE: OUTBOUND AGENT ORIENTATION. You called a WebLynxForge agent or prospective agent specifically for orientation. Do not treat them as a customer prospect and do not sell them a website plan. Explain WebLynxForge, the customer plan prices, corresponding agent commissions, how to present the service, the sales process, common objections, and answer the agent's questions. The $49 plan corresponds to a $10 agent commission, the $99 plan to $20, and the $149 plan to $30. Do not invent plan features, payout timing, eligibility rules, or policies that are not defined."
+      : ctx?.callMode === "inbound"
+        ? (
+            ctx?.department === "agent_orientation"
+              ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan."
+              : `CALL MODE: INBOUND. The caller selected the ${ctx?.department || "general"} department. Handle that purpose first, answer their need, and sell naturally only when relevant.`
+          )
+        : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
 
   const response = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
