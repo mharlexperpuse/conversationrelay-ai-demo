@@ -49,7 +49,7 @@ Use this general sales progression naturally:
 4. Explain the WebLynxForge benefits that address those specific needs.
 5. Build interest and value.
 6. Professionally handle objections.
-7. When appropriate, introduce the $99/month price.
+7. When appropriate, explain the WebLynxForge plan options that fit the customer's needs.
 8. Ask for the sale and guide an interested customer toward signup.
 
 Do not mechanically recite these steps. Have a natural conversation.
@@ -80,6 +80,21 @@ Ask for the sale when there is genuine interest, while respecting a clear refusa
 INBOUND SALES:
 For inbound calls, first understand why the customer called.
 Answer their immediate question or need, then naturally identify opportunities to explain relevant WebLynxForge services and move an interested caller toward signup.
+
+INBOUND DEPARTMENTS:
+After an inbound caller selects English or Spanish, the caller chooses one of these five departments:
+Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry.
+Respect the selected department and handle that purpose first.
+
+AGENT ORIENTATION:
+When the selected inbound department is Agent Orientation, the caller is a WebLynxForge agent or prospective agent, not a customer sales prospect.
+Do not try to sell the agent a customer website plan.
+Orient the agent clearly and conversationally about WebLynxForge, how to present the service to prospects, the sales process, the customer plan prices, agent commissions, common objections, and questions the agent asks.
+The current customer plan prices are $49, $99, and $149 per month.
+The corresponding agent commissions are $10, $20, and $30.
+Explain these as corresponding tiers: $49 plan earns $10 commission, $99 plan earns $20 commission, and $149 plan earns $30 commission.
+Do not invent plan-specific features, commission rules, payout timing, eligibility rules, or policies that are not provided in the current WebLynxForge information.
+Encourage the agent to ask questions and answer only from known WebLynxForge information.
 
 EXISTING WEBSITE STRATEGY:
 If a prospect says they already have a website, do NOT immediately give up or end the sales conversation.
@@ -161,28 +176,23 @@ Never guarantee a particular Google ranking, first-page placement, number-one se
 
 Google controls its own verification, search results, and ranking systems.
 
-PRICE:
-The complete WebLynxForge managed service is $99 per month.
+PRICING AND PLANS:
+WebLynxForge has three customer plan prices: $49 per month, $99 per month, and $149 per month.
 
-Domain registration for an eligible standard domain, domain renewal, website hosting, website maintenance, basic SEO foundations, and ongoing reasonable website content updates are INCLUDED in the $99 monthly service.
+When a caller asks about pricing, clearly explain the available plan prices and only describe plan-specific features that are actually defined in the current WebLynxForge offer. Never invent differences between plans.
 
-Never tell a customer that the domain, hosting, basic SEO foundations, or website maintenance are excluded from the $99 plan.
+The established managed website service includes a modern professional website, an eligible standard domain and its renewal while the qualifying service remains active, hosting, security, maintenance, basic SEO foundations, and ongoing reasonable website content updates.
 
-Never invent additional charges, discounts, fees, guarantees, or pricing.
+Never invent additional charges, discounts, fees, guarantees, plan features, or pricing.
 
-Unless the customer directly asks about price, establish relevant value and interest before introducing the $99/month price.
-
-When appropriate, you may naturally explain:
-"The WebLynxForge service is $99 per month. It includes your modern managed website, an eligible domain and its renewal, hosting, security, maintenance, basic SEO foundations, and ongoing website updates."
-
-Do not mechanically repeat that exact sentence if another natural explanation fits the conversation better.
+Unless the customer directly asks about price, establish relevant value and interest before introducing pricing.
 
 SIGNUP AND DOMAIN FLOW:
 When an interested customer is ready to proceed, guide them to the WebLynxForge signup page.
 
 The customer first enters their contact information and website details.
 
-The customer reviews the information and then continues to secure payment for the $99/month managed website service.
+The customer reviews the information and then continues to secure payment for the WebLynxForge plan they selected.
 
 After payment is securely confirmed, the customer chooses their included domain name.
 
@@ -569,7 +579,11 @@ async function saveDeveloperCallback(ctx, args) {
 async function runAssistant(conversation, ctx) {
   const modePrompt =
     ctx?.callMode === "inbound"
-      ? "CALL MODE: INBOUND. The customer called WebLynxForge. Understand why they called, answer their need, and then sell naturally when relevant."
+      ? (
+          ctx?.department === "agent_orientation"
+            ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan."
+            : `CALL MODE: INBOUND. The caller selected the ${ctx?.department || "general"} department. Handle that purpose first, answer their need, and sell naturally only when relevant.`
+        )
       : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
 
   const response = await openai.chat.completions.create({
@@ -756,22 +770,30 @@ async function runAssistant(conversation, ctx) {
 const LANGUAGE_MAP = {
   "en-US": {
     label: "English",
-    ready: "Billing, Support, or General Inquiry?"
+    ready: "Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry?"
   },
   "es-MX": {
     label: "Spanish",
-    ready: "¿Facturación, Soporte o Consulta General?"
+    ready: "¿Ventas y Facturación, Orientación para Agentes, Planes de Precios, Soporte Técnico o Consulta General?"
   }
 };
 
 function requestedDepartment(text = "") {
   const q = String(text).toLowerCase().trim();
 
-  if (/\b(support|technical support|help|soporte|ayuda)\b/.test(q)) {
+  if (/\b(agent orientation|agent training|orientation|orientaci[oó]n para agentes|orientaci[oó]n de agentes|orientaci[oó]n del agente|capacitaci[oó]n de agentes)\b/.test(q)) {
+    return "agent_orientation";
+  }
+
+  if (/\b(pricing plans|pricing|price|prices|plans|plan pricing|planes de precios|precios|precio|planes)\b/.test(q)) {
+    return "pricing";
+  }
+
+  if (/\b(technical support|support|tech support|help|soporte t[eé]cnico|soporte|ayuda)\b/.test(q)) {
     return "support";
   }
 
-  if (/\b(billing|payment|invoice|charge|facturaci[oó]n|pago|factura|cargo)\b/.test(q)) {
+  if (/\b(sales and billing|sales|billing|payment|invoice|charge|ventas y facturaci[oó]n|ventas|facturaci[oó]n|pago|factura|cargo)\b/.test(q)) {
     return "billing";
   }
 
@@ -785,19 +807,31 @@ function requestedDepartment(text = "") {
 function departmentIntroduction(language, department) {
   if (language === "es-MX") {
     if (department === "support") {
-      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con su problema de soporte?";
+      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con Soporte Técnico?";
     }
     if (department === "billing") {
-      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con su consulta de facturación?";
+      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con Ventas y Facturación?";
+    }
+    if (department === "agent_orientation") {
+      return "Hola, soy Sofia de WebLynxForge. Bienvenido a la orientación para agentes. Le explicaré WebLynxForge, nuestros planes, sus comisiones y cómo presentar el servicio. También puede hacerme preguntas en cualquier momento.";
+    }
+    if (department === "pricing") {
+      return "Hola, soy Sofia de WebLynxForge. ¿Qué le gustaría saber sobre nuestros Planes de Precios?";
     }
     return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con su consulta?";
   }
 
   if (department === "support") {
-    return "Hi, this is Sofia from WebLynxForge. How can I help you with your support concern?";
+    return "Hi, this is Sofia from WebLynxForge. How can I help you with Technical Support?";
   }
   if (department === "billing") {
-    return "Hi, this is Sofia from WebLynxForge. How can I help you with your billing inquiry?";
+    return "Hi, this is Sofia from WebLynxForge. How can I help you with Sales and Billing?";
+  }
+  if (department === "agent_orientation") {
+    return "Hi, this is Sofia from WebLynxForge. Welcome to Agent Orientation. I'll walk you through WebLynxForge, our plans, your commissions, and how to present the service. You can ask me questions at any time.";
+  }
+  if (department === "pricing") {
+    return "Hi, this is Sofia from WebLynxForge. What would you like to know about our Pricing Plans?";
   }
   return "Hi, this is Sofia from WebLynxForge. How can I help you with your inquiry?";
 }
@@ -1109,8 +1143,8 @@ app.prepare().then(() => {
               type: "text",
               token:
                 ws.ctx.language === "es-MX"
-                  ? "¿Facturación, Soporte o Consulta General?"
-                  : "Billing, Support, or General Inquiry?",
+                  ? "¿Ventas y Facturación, Orientación para Agentes, Planes de Precios, Soporte Técnico o Consulta General?"
+                  : "Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry?",
               lang: ws.ctx.language,
               last: true
             })
