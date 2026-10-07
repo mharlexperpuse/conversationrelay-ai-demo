@@ -588,6 +588,44 @@ async function saveDeveloperCallback(ctx, args) {
   };
 }
 
+async function recordLeadOutcome(ctx, reason) {
+  if (!ctx?.leadId || !ctx?.closeToken || !ctx?.closeEndpoint) {
+    return { ok: false, error: "missing_lead_context" };
+  }
+
+  if (!["customer_not_interested", "do_not_call"].includes(reason)) {
+    return { ok: true, skipped: true };
+  }
+
+  const outcomeEndpoint = String(ctx.closeEndpoint)
+    .replace(/sofia-close\.php(?:\?.*)?$/i, "sofia-outcome.php");
+
+  if (!outcomeEndpoint || outcomeEndpoint === ctx.closeEndpoint) {
+    return { ok: false, error: "outcome_endpoint_unavailable" };
+  }
+
+  try {
+    const res = await fetch(outcomeEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lead_id: Number(ctx.leadId),
+        close_token: ctx.closeToken,
+        reason
+      })
+    });
+
+    let data = {};
+    try { data = await res.json(); }
+    catch { data = { ok: false, error: "invalid_outcome_response" }; }
+
+    return { http_status: res.status, ...data };
+  } catch (err) {
+    console.error("Lead outcome update failed:", err?.message || String(err));
+    return { ok: false, error: "outcome_request_failed" };
+  }
+}
+
 async function runAssistant(conversation, ctx) {
   const modePrompt =
     ctx?.callMode === "inbound"
@@ -731,6 +769,11 @@ async function runAssistant(conversation, ctx) {
         args.final_message.trim()
           ? args.final_message.trim().slice(0, 300)
           : "Thank you for your time. Have a great day!";
+
+      if (reason === "customer_not_interested" || reason === "do_not_call") {
+        const outcomeResult = await recordLeadOutcome(ctx, reason);
+        console.log("Lead outcome result:", outcomeResult);
+      }
 
       return {
         text: finalMessage,
