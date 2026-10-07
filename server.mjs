@@ -83,7 +83,7 @@ Answer their immediate question or need, then naturally identify opportunities t
 
 INBOUND DEPARTMENTS:
 After an inbound caller selects English or Spanish, the caller chooses one of these five departments:
-Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry.
+Billing, Agent Orientation, Pricing, Support, or General Inquiry.
 Respect the selected department and handle that purpose first.
 
 AGENT ORIENTATION:
@@ -274,6 +274,18 @@ If they want to use the same number they called from, callback_phone may be an e
 Only after the caller confirms the callback details should you call request_developer_callback.
 Only tell the caller that the callback request was created if the tool reports success.
 Do not promise a specific callback time unless WebLynxForge has explicitly provided one.
+
+WEBLYNXFORGE CURRENT CUSTOMER PLANS:
+There are exactly three monthly customer plans:
+- $49/month — Small Business / Personal: custom domain, Admin CMS, Contact Form, Online Booking, SMS, up to 10 pages.
+- $99/month — Business / Enterprise: everything in $49, plus unlimited pages, advanced features, e-commerce, Mini Sofia Call Center, AI phone answering, and call transfer.
+- $149/month — Specialized Business: appropriate $99 features plus specialized workflows/systems for hotels, rentals, multi-location businesses, staff scheduling, and other specialized/hotel-specific functionality.
+Do not invent plan features or prices.
+
+AGENT ORIENTATION:
+Agent commissions are $10 for a paid $49 customer, $20 for a paid $99 customer, and $30 for a paid $149 customer.
+If an Agent Orientation caller clearly wants to become an agent or asks how to sign up, give them https://weblynxforge.dev/agent/signup.php.
+Do not invent payout timing or eligibility rules.
 
 TRUTHFULNESS:
 Never invent facts about WebLynxForge, the customer's business, their current website, competitors, pricing, results, policies, domain availability, SEO results, or Google performance.
@@ -578,15 +590,13 @@ async function saveDeveloperCallback(ctx, args) {
 
 async function runAssistant(conversation, ctx) {
   const modePrompt =
-    ctx?.callMode === "agent_orientation"
-      ? "CALL MODE: OUTBOUND AGENT ORIENTATION. You called a WebLynxForge agent or prospective agent specifically for orientation. Do not treat them as a customer prospect and do not sell them a website plan. Explain WebLynxForge, the customer plan prices, corresponding agent commissions, how to present the service, the sales process, common objections, and answer the agent's questions. The $49 plan corresponds to a $10 agent commission, the $99 plan to $20, and the $149 plan to $30. Do not invent plan features, payout timing, eligibility rules, or policies that are not defined."
-      : ctx?.callMode === "inbound"
-        ? (
-            ctx?.department === "agent_orientation"
-              ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan."
-              : `CALL MODE: INBOUND. The caller selected the ${ctx?.department || "general"} department. Handle that purpose first, answer their need, and sell naturally only when relevant.`
-          )
-        : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
+    ctx?.callMode === "inbound"
+      ? (
+          ctx?.department === "agent_orientation"
+            ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Explain WebLynxForge, the $49, $99, and $149 customer plans, corresponding $10, $20, and $30 agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan. If they clearly want to become an agent or ask how to sign up, give them https://weblynxforge.dev/agent/signup.php."
+            : `CALL MODE: INBOUND. The caller selected the ${ctx?.department || "general"} department. Handle that purpose first, answer their need, and sell naturally only when relevant.`
+        )
+      : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
 
   const response = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
@@ -772,11 +782,11 @@ async function runAssistant(conversation, ctx) {
 const LANGUAGE_MAP = {
   "en-US": {
     label: "English",
-    ready: "Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry?"
+    ready: "Sales and Billing. ... Agent Orientation. ... Pricing Plans. ... Technical Support. ... Or General Inquiry?"
   },
   "es-MX": {
     label: "Spanish",
-    ready: "¿Ventas y Facturación, Orientación para Agentes, Planes de Precios, Soporte Técnico o Consulta General?"
+    ready: "Ventas y Facturación. ... Orientación para Agentes. ... Planes de Precios. ... Soporte Técnico. ... O Consulta General?"
   }
 };
 
@@ -787,15 +797,15 @@ function requestedDepartment(text = "") {
     return "agent_orientation";
   }
 
-  if (/\b(pricing plans|pricing|price|prices|plans|plan pricing|planes de precios|precios|precio|planes)\b/.test(q)) {
+  if (/\b(pricing|price|prices|plans|plan pricing|precios|precio|planes)\b/.test(q)) {
     return "pricing";
   }
 
-  if (/\b(technical support|support|tech support|help|soporte t[eé]cnico|soporte|ayuda)\b/.test(q)) {
+  if (/\b(support|technical support|help|soporte|ayuda)\b/.test(q)) {
     return "support";
   }
 
-  if (/\b(sales and billing|sales|billing|payment|invoice|charge|ventas y facturaci[oó]n|ventas|facturaci[oó]n|pago|factura|cargo)\b/.test(q)) {
+  if (/\b(billing|payment|invoice|charge|facturaci[oó]n|pago|factura|cargo)\b/.test(q)) {
     return "billing";
   }
 
@@ -809,31 +819,31 @@ function requestedDepartment(text = "") {
 function departmentIntroduction(language, department) {
   if (language === "es-MX") {
     if (department === "support") {
-      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con Soporte Técnico?";
+      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con su problema de soporte?";
     }
     if (department === "billing") {
-      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con Ventas y Facturación?";
+      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con su consulta de facturación?";
     }
     if (department === "agent_orientation") {
       return "Hola, soy Sofia de WebLynxForge. Bienvenido a la orientación para agentes. Le explicaré WebLynxForge, nuestros planes, sus comisiones y cómo presentar el servicio. También puede hacerme preguntas en cualquier momento.";
     }
     if (department === "pricing") {
-      return "Hola, soy Sofia de WebLynxForge. ¿Qué le gustaría saber sobre nuestros Planes de Precios?";
+      return "Hola, soy Sofia de WebLynxForge. ¿Qué le gustaría saber sobre nuestros precios y planes?";
     }
     return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con su consulta?";
   }
 
   if (department === "support") {
-    return "Hi, this is Sofia from WebLynxForge. How can I help you with Technical Support?";
+    return "Hi, this is Sofia from WebLynxForge. How can I help you with your support concern?";
   }
   if (department === "billing") {
-    return "Hi, this is Sofia from WebLynxForge. How can I help you with Sales and Billing?";
+    return "Hi, this is Sofia from WebLynxForge. How can I help you with your billing inquiry?";
   }
   if (department === "agent_orientation") {
     return "Hi, this is Sofia from WebLynxForge. Welcome to Agent Orientation. I'll walk you through WebLynxForge, our plans, your commissions, and how to present the service. You can ask me questions at any time.";
   }
   if (department === "pricing") {
-    return "Hi, this is Sofia from WebLynxForge. What would you like to know about our Pricing Plans?";
+    return "Hi, this is Sofia from WebLynxForge. What would you like to know about our pricing and plans?";
   }
   return "Hi, this is Sofia from WebLynxForge. How can I help you with your inquiry?";
 }
@@ -1145,8 +1155,8 @@ app.prepare().then(() => {
               type: "text",
               token:
                 ws.ctx.language === "es-MX"
-                  ? "¿Ventas y Facturación, Orientación para Agentes, Planes de Precios, Soporte Técnico o Consulta General?"
-                  : "Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry?",
+                  ? "¿Facturación, Orientación para Agentes, Precios, Soporte o Consulta General?"
+                  : "Billing, Agent Orientation, Pricing, Support, or General Inquiry?",
               lang: ws.ctx.language,
               last: true
             })
