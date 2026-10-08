@@ -1185,12 +1185,18 @@ app.prepare().then(() => {
 
         const context = [];
 
-        if (ws.ctx.businessName) {
-          context.push(`Business: ${ws.ctx.businessName}`);
-        }
+        // Inbound caller identity is unverified: the incoming phone number may
+        // match a prior outbound lead or be shared/reassigned. Do not tell
+        // Sofia the stored business/contact name until the caller confirms it.
+        // Keep the lead linkage for existing call history and transcript auth.
+        if (ws.ctx.callMode !== "inbound") {
+          if (ws.ctx.businessName) {
+            context.push(`Business: ${ws.ctx.businessName}`);
+          }
 
-        if (ws.ctx.contactName) {
-          context.push(`Contact: ${ws.ctx.contactName}`);
+          if (ws.ctx.contactName) {
+            context.push(`Contact: ${ws.ctx.contactName}`);
+          }
         }
         if (ws.ctx.callMode !== "inbound" && ws.ctx.offerType) {
           context.push(`Manual outbound offer: ${ws.ctx.offerType}`);
