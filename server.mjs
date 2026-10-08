@@ -18,6 +18,69 @@ const sessions = new Map();
 const TRANSCRIPTS_ENABLED = process.env.SOFIA_TRANSCRIPTS_ENABLED === "1";
 const TRANSCRIPT_API = "https://weblynxforge.dev/sofia-transcript.php";
 
+// Deterministic voicemail detection: avoid spending OpenAI tokens talking to a mailbox.
+// This is speech-prompt recognition, not Twilio pre-answer AMD. It detects clear
+// machine greetings as soon as Twilio delivers their transcription.
+const VOICEMAIL_OUTCOME_API = "https://weblynxforge.dev/sofia-voicemail.php";
+
+function isVoicemailGreeting(spoken) {
+  const text = String(spoken || "")
+    .toLowerCase()
+    .replace(/[’‘]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text || text.length > 1200) return false;
+
+  // High-confidence, automated mailbox instructions.
+  const clear = [
+    /\bat (?:the )?(?:sound of the )?(?:tone|beep)\b/,
+    /\bafter (?:the )?(?:tone|beep)\b/,
+    /\brecord your (?:voice )?message\b/,
+    /\b(?:please )?leave (?:your |a )?(?:voice ?mail|voicemail|message)\b/,
+    /\bleave (?:your )?(?:name and (?:phone )?number|name and a (?:brief )?message)\b/,
+    /\bpress (?:one|1) to (?:listen to|hear|review) your message\b/,
+    /\bpress (?:two|2) to (?:erase|delete|re-?record)\b/,
+    /\b(?:you have|you've) reached (?:the )?(?:voice ?mail|voicemail|mailbox)\b/,
+    /\b(?:your )?call (?:has been|is being) forwarded to (?:an? )?(?:automated )?(?:voice )?(?:messaging|voicemail)\b/,
+    /\b(?:mailbox|voice ?mail|voicemail) (?:is|has been) (?:full|not set up)\b/,
+    /\b(?:unable|not available) to (?:take|answer) your call (?:right now|at (?:this|the) time)\b/,
+    /\bplease (?:leave|state) your (?:name|number) (?:and|with) (?:your |a )?(?:phone )?(?:number|message)\b/
+  ];
+  return clear.some(pattern => pattern.test(text));
+}
+
+async function recordVoicemailOutcome(ws) {
+  if (!ws?.callSid || !ws?.ctx?.leadId || !ws?.ctx?.closeToken) return;
+  const payload = {
+    lead_id: Number(ws.ctx.leadId),
+    call_sid: ws.callSid,
+    close_token: ws.ctx.closeToken
+  };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(VOICEMAIL_OUTCOME_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(6000)
+      });
+      if (response.ok) {
+        console.log("Sofia voicemail outcome saved:", ws.callSid);
+        return;
+      }
+      if (response.status !== 404 && response.status < 500) {
+        console.warn("Sofia voicemail outcome rejected:", response.status, ws.callSid);
+        return;
+      }
+      console.warn("Sofia voicemail outcome pending:", response.status, ws.callSid);
+    } catch (error) {
+      console.warn("Sofia voicemail outcome transport issue:", ws.callSid,
+        error?.name || "network_error");
+    }
+    if (attempt < 2) await waitForTranscriptRetry(800 * (attempt + 1));
+  }
+}
+
 function waitForTranscriptRetry(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -1258,6 +1321,21 @@ app.prepare().then(() => {
       // Twilio provides the customer's final speech-to-text prompt.
       queueTranscript(ws, "customer", message.voicePrompt,
         "twilio_speech_transcription");
+
+      // Mailbox prompts are not human replies. Intercept before menus,
+      // OpenAI, SMS tools, or the normal outbound sales workflow.
+      if (ws.ctx.callMode === "outbound") {
+        if (ws.ctx.voicemailDetected) return;
+        if (isVoicemailGreeting(message.voicePrompt)) {
+          ws.ctx.voicemailDetected = true;
+          console.log("Sofia voicemail greeting detected:", ws.callSid);
+          // No sales pitch or voicemail message: close the Twilio relay.
+          // Record the outcome independently of the transcript toggle.
+          void recordVoicemailOutcome(ws);
+          endConversationRelay(ws, "voicemail_detected", "sofia-voicemail-detected");
+          return;
+        }
+      }
 
       const requested = requestedLanguage(
         message.voicePrompt
