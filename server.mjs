@@ -48,17 +48,23 @@ async function postTranscriptEvent(payload) {
 }
 
 function queueTranscript(ws, role, spokenText, source = "conversation") {
-  if (!TRANSCRIPTS_ENABLED || !ws?.callSid ||
-      ws.ctx?.callMode !== "outbound" ||
-      !ws.ctx?.leadId || !ws.ctx?.closeToken) return;
+  if (!TRANSCRIPTS_ENABLED || !ws?.callSid) return;
+  const inbound = ws.ctx?.callMode === "inbound";
+  if (inbound) {
+    // Existing signed inbound support token; works for callers without a lead.
+    if (!ws.ctx?.supportToken) return;
+  } else if (!ws.ctx?.leadId || !ws.ctx?.closeToken) {
+    return;
+  }
 
   const text = String(spokenText || "").trim();
   if (!text) return;
   ws.transcriptSeq = (ws.transcriptSeq || 0) + 1;
   const payload = {
-    lead_id: Number(ws.ctx.leadId),
+    call_mode: inbound ? "inbound" : "outbound",
+    lead_id: ws.ctx.leadId ? Number(ws.ctx.leadId) : null,
     call_sid: ws.callSid,
-    close_token: ws.ctx.closeToken,
+    ...(inbound ? { support_token: ws.ctx.supportToken } : { close_token: ws.ctx.closeToken }),
     event_id: String(ws.transcriptSeq),
     role,
     text: text.slice(0, 8000),
@@ -1040,6 +1046,7 @@ function switchLanguage(ws, code, announce = true) {
   );
 
   if (announce) {
+    queueTranscript(ws, "sofia", LANGUAGE_MAP[code].ready);
     ws.send(
       JSON.stringify({
         type: "text",
@@ -1166,7 +1173,10 @@ app.prepare().then(() => {
           monthlyPlan: ["49", "99", "149"].includes(String(cp.monthly_plan)) ? String(cp.monthly_plan) : "",
           demoUrl: String(cp.demo_url || "").slice(0, 500),
           salesNotes: String(cp.sales_notes || "").slice(0, 1500),
-          welcomeGreeting: String(cp.welcome_greeting || "").slice(0, 800),
+          welcomeGreeting: String(cp.welcome_greeting ||
+            (cp.call_mode === "inbound"
+              ? "Thank you for calling WebLynxForge. This is Sofia. English or Spanish?"
+              : "")).slice(0, 800),
           language: "en-US", // Manual outbound fixed English; inbound menu selects English or Spanish.
           languageSelected: cp.call_mode !== "inbound",
           department: "",
@@ -1258,6 +1268,7 @@ app.prepare().then(() => {
         }
 
         if (!ws.ctx.languageSelected) {
+          queueTranscript(ws, "sofia", "Please say English or Spanish.");
           ws.send(
             JSON.stringify({
               type: "text",
@@ -1279,13 +1290,14 @@ app.prepare().then(() => {
         const department = requestedDepartment(message.voicePrompt);
 
         if (!department) {
+          const menuText = ws.ctx.language === "es-MX"
+            ? "¿Ventas y Facturación, Orientación para Agentes, Planes de Precios, Soporte Técnico o Consulta General?"
+            : "Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry?";
+          queueTranscript(ws, "sofia", menuText);
           ws.send(
             JSON.stringify({
               type: "text",
-              token:
-                ws.ctx.language === "es-MX"
-                  ? "¿Ventas y Facturación, Orientación para Agentes, Planes de Precios, Soporte Técnico o Consulta General?"
-                  : "Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry?",
+              token: menuText,
               lang: ws.ctx.language,
               last: true
             })
@@ -1301,6 +1313,7 @@ app.prepare().then(() => {
           department
         );
 
+        queueTranscript(ws, "sofia", intro);
         ws.send(
           JSON.stringify({
             type: "text",
