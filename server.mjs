@@ -28,10 +28,9 @@ Be assertive and persistent in sales, but never rude, deceptive, argumentative, 
 Listen carefully to the customer and adapt the conversation to what they actually say.
 
 LANGUAGE:
-The caller may use English or Spanish only.
-Once the caller chooses a language, speak naturally in that language.
-Do not offer or switch to any other language.
-If the caller asks to change language later, only switch between English and Spanish.
+Inbound language menu remains English and Spanish only.
+For MANUAL OUTBOUND calls, speak English only (en-US); no language selector. Keep the existing INBOUND English/Spanish language menu and departments unchanged.
+For an outbound manual call, the lead context supplies the agreed offer, price, business category, demo URL and sales notes. Use these specific facts rather than a generic offer. If a $49 plan is selected, never present $99 or $149 as the quoted price for this custom offer; do not claim other plans don't exist. Never invent features, URLs or guarantees. If no demo URL is supplied, say you cannot text the demo yet.
 
 CORE SALES STRATEGY:
 Your goal is to professionally convert qualified prospects into WebLynxForge customers.
@@ -83,7 +82,7 @@ Answer their immediate question or need, then naturally identify opportunities t
 
 INBOUND DEPARTMENTS:
 After an inbound caller selects English or Spanish, the caller chooses one of these five departments:
-Billing, Agent Orientation, Pricing, Support, or General Inquiry.
+Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry.
 Respect the selected department and handle that purpose first.
 
 AGENT ORIENTATION:
@@ -224,11 +223,14 @@ Privacy: https://weblynxforge.dev/privacy.php
 
 Ask for an explicit yes or no.
 
-Only after the customer explicitly agrees to receive the text may you call the send_checkout_link tool.
+Only after the customer explicitly agrees to receive the text may you call the send_checkout_link tool or send_demo_link tool.
+For manual outbound sales, proactively introduce the custom website demo and offer to text its link: "We prepared a demo for your business. May I text you the link?" If they clearly say yes to receiving that SMS, use send_demo_link immediately. A yes to the text request is sufficient verbal consent for the requested demo SMS; do not ask them to repeat the same permission. Do not send the signup link unless the customer wants to proceed and has also agreed to receive that link by text. A separate consent question is unnecessary if the customer has clearly agreed to receive both links. Respect no, STOP, or requests not to contact.
+Do not claim any SMS was sent unless the corresponding tool confirms success. SMS is an optional follow-up, not a precondition for a call.
 
 Agreement to purchase the WebLynxForge service by itself is NOT SMS consent.
 
 After the tool reports checkout_sent or already_sent, tell the customer that the secure WebLynxForge signup link was sent to their number.
+After the tool reports demo_sent or demo_already_sent, tell the customer their requested demo link was sent.
 
 Briefly explain that they will enter their information and website details, review them, continue to secure checkout, and after payment is confirmed choose their included domain.
 
@@ -275,18 +277,6 @@ Only after the caller confirms the callback details should you call request_deve
 Only tell the caller that the callback request was created if the tool reports success.
 Do not promise a specific callback time unless WebLynxForge has explicitly provided one.
 
-WEBLYNXFORGE CURRENT CUSTOMER PLANS:
-There are exactly three monthly customer plans:
-- $49/month — Small Business / Personal: custom domain, Admin CMS, Contact Form, Online Booking, SMS, up to 10 pages.
-- $99/month — Business / Enterprise: everything in $49, plus unlimited pages, advanced features, e-commerce, Mini Sofia Call Center, AI phone answering, and call transfer.
-- $149/month — Specialized Business: appropriate $99 features plus specialized workflows/systems for hotels, rentals, multi-location businesses, staff scheduling, and other specialized/hotel-specific functionality.
-Do not invent plan features or prices.
-
-AGENT ORIENTATION:
-Agent commissions are $10 for a paid $49 customer, $20 for a paid $99 customer, and $30 for a paid $149 customer.
-If an Agent Orientation caller clearly wants to become an agent or asks how to sign up, give them https://weblynxforge.dev/agent/signup.php.
-Do not invent payout timing or eligibility rules.
-
 TRUTHFULNESS:
 Never invent facts about WebLynxForge, the customer's business, their current website, competitors, pricing, results, policies, domain availability, SEO results, or Google performance.
 
@@ -305,6 +295,21 @@ const tools = [
           sms_consent_confirmed: {
             type: "boolean"
           }
+        },
+        required: ["sms_consent_confirmed"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_demo_link",
+      description: "Text the specific website demo URL for this MANUAL OUTBOUND lead immediately after the customer explicitly says yes to Sofia offering to text the demo. Do not invent the URL or send without permission.",
+      parameters: {
+        type: "object",
+        properties: {
+          sms_consent_confirmed: { type: "boolean" }
         },
         required: ["sms_consent_confirmed"],
         additionalProperties: false
@@ -433,7 +438,8 @@ async function sendCheckoutLink(ctx) {
     },
     body: JSON.stringify({
       lead_id: Number(ctx.leadId),
-      close_token: ctx.closeToken
+      close_token: ctx.closeToken,
+      message_type: "signup"
     })
   });
 
@@ -452,6 +458,28 @@ async function sendCheckoutLink(ctx) {
     http_status: res.status,
     ...data
   };
+}
+
+async function sendDemoLink(ctx) {
+  if (ctx?.callMode !== "outbound" || !ctx?.leadId || !ctx?.closeToken ||
+      !ctx?.closeEndpoint || !ctx?.demoUrl) {
+    return { ok: false, error: "demo_unavailable" };
+  }
+  try {
+    const res = await fetch(ctx.closeEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lead_id: Number(ctx.leadId),
+        close_token: ctx.closeToken,
+        message_type: "demo"
+      })
+    });
+    const data = await res.json().catch(() => ({ ok: false, error: "invalid_sms_response" }));
+    return { http_status: res.status, ...data };
+  } catch (err) {
+    return { ok: false, error: "sms_request_failed" };
+  }
 }
 
 async function createSupportTicket(ctx, args) {
@@ -588,53 +616,17 @@ async function saveDeveloperCallback(ctx, args) {
   };
 }
 
-async function recordLeadOutcome(ctx, reason) {
-  if (!ctx?.leadId || !ctx?.closeToken || !ctx?.closeEndpoint) {
-    return { ok: false, error: "missing_lead_context" };
-  }
-
-  if (!["customer_not_interested", "do_not_call"].includes(reason)) {
-    return { ok: true, skipped: true };
-  }
-
-  const outcomeEndpoint = String(ctx.closeEndpoint)
-    .replace(/sofia-close\.php(?:\?.*)?$/i, "sofia-outcome.php");
-
-  if (!outcomeEndpoint || outcomeEndpoint === ctx.closeEndpoint) {
-    return { ok: false, error: "outcome_endpoint_unavailable" };
-  }
-
-  try {
-    const res = await fetch(outcomeEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        lead_id: Number(ctx.leadId),
-        close_token: ctx.closeToken,
-        reason
-      })
-    });
-
-    let data = {};
-    try { data = await res.json(); }
-    catch { data = { ok: false, error: "invalid_outcome_response" }; }
-
-    return { http_status: res.status, ...data };
-  } catch (err) {
-    console.error("Lead outcome update failed:", err?.message || String(err));
-    return { ok: false, error: "outcome_request_failed" };
-  }
-}
-
 async function runAssistant(conversation, ctx) {
   const modePrompt =
     ctx?.callMode === "inbound"
       ? (
           ctx?.department === "agent_orientation"
-            ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Explain WebLynxForge, the $49, $99, and $149 customer plans, corresponding $10, $20, and $30 agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan. If they clearly want to become an agent or ask how to sign up, give them https://weblynxforge.dev/agent/signup.php."
+            ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan."
             : `CALL MODE: INBOUND. The caller selected the ${ctx?.department || "general"} department. Handle that purpose first, answer their need, and sell naturally only when relevant.`
         )
-      : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.";
+      : (ctx?.offerType
+          ? `CALL MODE: MANUAL OUTBOUND CUSTOM SALES OFFER. Lead the conversation. Assigned offer: ${ctx.offerType}. Assigned business type: ${ctx.businessType}. Assigned monthly price: $${ctx.monthlyPlan}/month. Assigned demo URL: ${ctx.demoUrl || "NOT PROVIDED"}. Spoken language: English. Proactively offer the prepared demo link by SMS. After the customer says yes to receiving it, immediately use send_demo_link. If ready to signup, obtain SMS consent and use send_checkout_link. Do not substitute another price for this offer. Additional factual notes: ${ctx.salesNotes || "none"}`
+          : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.");
 
   const response = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
@@ -694,6 +686,14 @@ async function runAssistant(conversation, ctx) {
               ok: false,
               error: "sms_consent_not_confirmed"
             };
+    }
+
+    if (call.function?.name === "send_demo_link") {
+      let args = {};
+      try { args = JSON.parse(call.function.arguments || "{}"); } catch {}
+      result = args.sms_consent_confirmed === true
+        ? await sendDemoLink(ctx)
+        : { ok: false, error: "sms_consent_not_confirmed" };
     }
 
     if (call.function?.name === "create_support_ticket") {
@@ -770,11 +770,6 @@ async function runAssistant(conversation, ctx) {
           ? args.final_message.trim().slice(0, 300)
           : "Thank you for your time. Have a great day!";
 
-      if (reason === "customer_not_interested" || reason === "do_not_call") {
-        const outcomeResult = await recordLeadOutcome(ctx, reason);
-        console.log("Lead outcome result:", outcomeResult);
-      }
-
       return {
         text: finalMessage,
         message: msg,
@@ -825,11 +820,11 @@ async function runAssistant(conversation, ctx) {
 const LANGUAGE_MAP = {
   "en-US": {
     label: "English",
-    ready: "Sales and Billing. ... Agent Orientation. ... Pricing Plans. ... Technical Support. ... Or General Inquiry?"
+    ready: "Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry?"
   },
   "es-MX": {
     label: "Spanish",
-    ready: "Ventas y Facturación. ... Orientación para Agentes. ... Planes de Precios. ... Soporte Técnico. ... O Consulta General?"
+    ready: "¿Ventas y Facturación, Orientación para Agentes, Planes de Precios, Soporte Técnico o Consulta General?"
   }
 };
 
@@ -840,15 +835,15 @@ function requestedDepartment(text = "") {
     return "agent_orientation";
   }
 
-  if (/\b(pricing|price|prices|plans|plan pricing|precios|precio|planes)\b/.test(q)) {
+  if (/\b(pricing plans|pricing|price|prices|plans|plan pricing|planes de precios|precios|precio|planes)\b/.test(q)) {
     return "pricing";
   }
 
-  if (/\b(support|technical support|help|soporte|ayuda)\b/.test(q)) {
+  if (/\b(technical support|support|tech support|help|soporte t[eé]cnico|soporte|ayuda)\b/.test(q)) {
     return "support";
   }
 
-  if (/\b(billing|payment|invoice|charge|facturaci[oó]n|pago|factura|cargo)\b/.test(q)) {
+  if (/\b(sales and billing|sales|billing|payment|invoice|charge|ventas y facturaci[oó]n|ventas|facturaci[oó]n|pago|factura|cargo)\b/.test(q)) {
     return "billing";
   }
 
@@ -862,38 +857,37 @@ function requestedDepartment(text = "") {
 function departmentIntroduction(language, department) {
   if (language === "es-MX") {
     if (department === "support") {
-      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con su problema de soporte?";
+      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con Soporte Técnico?";
     }
     if (department === "billing") {
-      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con su consulta de facturación?";
+      return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con Ventas y Facturación?";
     }
     if (department === "agent_orientation") {
       return "Hola, soy Sofia de WebLynxForge. Bienvenido a la orientación para agentes. Le explicaré WebLynxForge, nuestros planes, sus comisiones y cómo presentar el servicio. También puede hacerme preguntas en cualquier momento.";
     }
     if (department === "pricing") {
-      return "Hola, soy Sofia de WebLynxForge. ¿Qué le gustaría saber sobre nuestros precios y planes?";
+      return "Hola, soy Sofia de WebLynxForge. ¿Qué le gustaría saber sobre nuestros Planes de Precios?";
     }
     return "Hola, soy Sofia de WebLynxForge. ¿Cómo puedo ayudarle con su consulta?";
   }
 
   if (department === "support") {
-    return "Hi, this is Sofia from WebLynxForge. How can I help you with your support concern?";
+    return "Hi, this is Sofia from WebLynxForge. How can I help you with Technical Support?";
   }
   if (department === "billing") {
-    return "Hi, this is Sofia from WebLynxForge. How can I help you with your billing inquiry?";
+    return "Hi, this is Sofia from WebLynxForge. How can I help you with Sales and Billing?";
   }
   if (department === "agent_orientation") {
     return "Hi, this is Sofia from WebLynxForge. Welcome to Agent Orientation. I'll walk you through WebLynxForge, our plans, your commissions, and how to present the service. You can ask me questions at any time.";
   }
   if (department === "pricing") {
-    return "Hi, this is Sofia from WebLynxForge. What would you like to know about our pricing and plans?";
+    return "Hi, this is Sofia from WebLynxForge. What would you like to know about our Pricing Plans?";
   }
   return "Hi, this is Sofia from WebLynxForge. How can I help you with your inquiry?";
 }
 
 function requestedLanguage(text = "") {
-  const q = text.toLowerCase().trim();
-
+  const q = String(text).toLowerCase().trim();
   if (/\b(espa[nñ]ol|spanish|mexican|méxico|mexico)\b/.test(q)) {
     return "es-MX";
   }
@@ -1102,7 +1096,12 @@ app.prepare().then(() => {
           callbackToken: cp.callback_token || "",
           supportEndpoint: cp.support_endpoint || "",
           supportToken: cp.support_token || "",
-          language: "en-US",
+          businessType: String(cp.business_type || "").slice(0, 100),
+          offerType: String(cp.offer_type || "").slice(0, 120),
+          monthlyPlan: ["49", "99", "149"].includes(String(cp.monthly_plan)) ? String(cp.monthly_plan) : "",
+          demoUrl: String(cp.demo_url || "").slice(0, 500),
+          salesNotes: String(cp.sales_notes || "").slice(0, 1500),
+          language: "en-US", // Manual outbound fixed English; inbound menu selects English or Spanish.
           languageSelected: cp.call_mode !== "inbound",
           department: "",
           departmentSelected: cp.call_mode !== "inbound"
@@ -1116,6 +1115,14 @@ app.prepare().then(() => {
 
         if (ws.ctx.contactName) {
           context.push(`Contact: ${ws.ctx.contactName}`);
+        }
+        if (ws.ctx.callMode !== "inbound" && ws.ctx.offerType) {
+          context.push(`Manual outbound offer: ${ws.ctx.offerType}`);
+          context.push(`Business type: ${ws.ctx.businessType}`);
+          context.push(`Quoted price: $${ws.ctx.monthlyPlan}/month`);
+          context.push(`Preferred language: ${ws.ctx.language}`);
+          context.push(`Demo URL: ${ws.ctx.demoUrl || "not provided"}`);
+          if (ws.ctx.salesNotes) context.push(`Additional sales notes: ${ws.ctx.salesNotes}`);
         }
 
         if (ws.ctx.transferFailed) {
@@ -1161,6 +1168,7 @@ app.prepare().then(() => {
       const requested = requestedLanguage(
         message.voicePrompt
       );
+      // Manual outbound stays English; inbound keeps its existing language menu.
 
       if (
         ws.ctx.callMode === "inbound" &&
@@ -1198,8 +1206,8 @@ app.prepare().then(() => {
               type: "text",
               token:
                 ws.ctx.language === "es-MX"
-                  ? "¿Facturación, Orientación para Agentes, Precios, Soporte o Consulta General?"
-                  : "Billing, Agent Orientation, Pricing, Support, or General Inquiry?",
+                  ? "¿Ventas y Facturación, Orientación para Agentes, Planes de Precios, Soporte Técnico o Consulta General?"
+                  : "Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or General Inquiry?",
               lang: ws.ctx.language,
               last: true
             })
