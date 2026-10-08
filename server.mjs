@@ -12,6 +12,68 @@ const PORT = process.env.PORT || 3000;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const sessions = new Map();
 
+// Transcript logging is OFF until the owner has put legally sufficient
+// notice/consent procedures in place and enables it on Render.
+// This never sends transcript content to console logs.
+const TRANSCRIPTS_ENABLED = process.env.SOFIA_TRANSCRIPTS_ENABLED === "1";
+const TRANSCRIPT_API = "https://weblynxforge.dev/sofia-transcript.php";
+
+function waitForTranscriptRetry(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function postTranscriptEvent(payload) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const response = await fetch(TRANSCRIPT_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(6000)
+      });
+      if (response.ok) return true;
+      // 403 means a rejected/expired token; retrying cannot fix it.
+      if (response.status === 403 || response.status === 400) {
+        console.error("Sofia transcript rejected:", response.status, payload.call_sid);
+        return false;
+      }
+      console.warn("Sofia transcript HTTP status:", response.status, payload.call_sid);
+    } catch (error) {
+      console.warn("Sofia transcript transport issue:", payload.call_sid,
+        error?.name || "network_error");
+    }
+    if (attempt < 3) await waitForTranscriptRetry(700 * (attempt + 1));
+  }
+  return false;
+}
+
+function queueTranscript(ws, role, spokenText, source = "conversation") {
+  if (!TRANSCRIPTS_ENABLED || !ws?.callSid ||
+      ws.ctx?.callMode !== "outbound" ||
+      !ws.ctx?.leadId || !ws.ctx?.closeToken) return;
+
+  const text = String(spokenText || "").trim();
+  if (!text) return;
+  ws.transcriptSeq = (ws.transcriptSeq || 0) + 1;
+  const payload = {
+    lead_id: Number(ws.ctx.leadId),
+    call_sid: ws.callSid,
+    close_token: ws.ctx.closeToken,
+    event_id: String(ws.transcriptSeq),
+    role,
+    text: text.slice(0, 8000),
+    source
+  };
+  // Chain events to preserve order. Never delay speech while writing to MySQL.
+  ws.transcriptChain = (ws.transcriptChain || Promise.resolve())
+    .then(() => postTranscriptEvent(payload))
+    .catch(error => {
+      console.error("Sofia transcript queue failed:", ws.callSid,
+        error?.name || "unknown_error");
+    });
+}
+
+
 const SYSTEM_PROMPT = `You are Sofia, the WebLynxForge sales assistant on a live business phone call.
 
 PERSONALITY AND VOICE:
@@ -1020,6 +1082,7 @@ function trimConversation(conversation, maxMessages = 20) {
 }
 
 function sendText(ws, text) {
+  queueTranscript(ws, "sofia", text);
   ws.send(
     JSON.stringify({
       type: "text",
@@ -1066,6 +1129,8 @@ app.prepare().then(() => {
   wss.on("connection", (ws) => {
     ws.callSid = null;
     ws.ctx = {};
+    ws.transcriptSeq = 0;
+    ws.transcriptChain = Promise.resolve();
 
     ws.on("message", async (data) => {
       let message;
@@ -1101,6 +1166,7 @@ app.prepare().then(() => {
           monthlyPlan: ["49", "99", "149"].includes(String(cp.monthly_plan)) ? String(cp.monthly_plan) : "",
           demoUrl: String(cp.demo_url || "").slice(0, 500),
           salesNotes: String(cp.sales_notes || "").slice(0, 1500),
+          welcomeGreeting: String(cp.welcome_greeting || "").slice(0, 800),
           language: "en-US", // Manual outbound fixed English; inbound menu selects English or Spanish.
           languageSelected: cp.call_mode !== "inbound",
           department: "",
@@ -1129,6 +1195,14 @@ app.prepare().then(() => {
           context.push(
             "The attempted live transfer to the web developer was not answered. Offer to create a developer callback request and collect/confirm the caller name, callback-number preference, and concern before using the callback tool."
           );
+        }
+
+        // The initial greeting is spoken by Twilio's welcomeGreeting,
+        // outside runAssistant. Save it as a configured opening, not as
+        // proof that the customer actually heard it.
+        if (ws.ctx.welcomeGreeting) {
+          queueTranscript(ws, "sofia", ws.ctx.welcomeGreeting,
+            "configured_welcome_greeting");
         }
 
         sessions.set(
@@ -1164,6 +1238,10 @@ app.prepare().then(() => {
       ) {
         return;
       }
+
+      // Twilio provides the customer's final speech-to-text prompt.
+      queueTranscript(ws, "customer", message.voicePrompt,
+        "twilio_speech_transcription");
 
       const requested = requestedLanguage(
         message.voicePrompt
@@ -1294,7 +1372,7 @@ app.prepare().then(() => {
 
         sendText(ws, out.text);
 
-        console.log("Response:", out.text);
+        // Avoid storing private conversations in Render console logs.
 
         if (out.transferCall) {
           console.log(
@@ -1341,6 +1419,7 @@ app.prepare().then(() => {
             ? "Lo siento, hubo un breve problema. ¿Puede repetirlo?"
             : "I'm sorry, I had a brief problem. Could you say that again?";
 
+        queueTranscript(ws, "sofia", errText, "error_reply");
         ws.send(
           JSON.stringify({
             type: "text",
@@ -1353,6 +1432,8 @@ app.prepare().then(() => {
     });
 
     ws.on("close", () => {
+      // The already queued writes may continue after socket close.
+      // This does not hold the telephone connection open.
       if (ws.callSid) {
         sessions.delete(ws.callSid);
       }
