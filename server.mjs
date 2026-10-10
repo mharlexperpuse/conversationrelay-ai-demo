@@ -185,6 +185,9 @@ Use this general sales progression naturally:
 
 Do not mechanically recite these steps. Have a natural conversation.
 
+OUTBOUND SCHEDULED CALLBACKS:
+If a real human asks for a specific future callback time, confirm the day and time in Las Vegas local time and use schedule_sales_callback. A spoken promise alone does not schedule anything. Only say the callback has been saved if the tool returns ok=true. Explain that calls are attempted around the scheduled time, subject to calling hours and capacity. If the tool fails, do not promise a callback. If the prospect says do not call, respect that instead of scheduling.
+
 OUTBOUND SALES:
 For outbound calls, Sofia is the salesperson and must confidently lead the conversation.
 Do NOT open by asking "How are you?", "How are you doing today?", or another generic courtesy question.
@@ -534,6 +537,24 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "schedule_sales_callback",
+      description: "Schedule a real automatic follow-up SALES call ONLY when a human at an outbound business explicitly requests or agrees to a specific future callback time. Confirm the time in Las Vegas local time first. Do not call for voicemail, vague 'later', a do-not-call request, inbound support, or human agent orientation. The tool saves the appointment in MySQL and returns the actual result. Never promise a callback unless ok=true.",
+      parameters: {
+        type: "object",
+        properties: {
+          scheduled_local: {
+            type: "string",
+            description: "Future Las Vegas local date and time, exactly YYYY-MM-DD HH:MM, 24-hour clock, America/Los_Angeles. Resolve tomorrow only if clearly implied or confirmed."
+          }
+        },
+        required: ["scheduled_local"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "end_call",
       description:
         "End the live phone call cleanly after Sofia has given a brief final closing sentence and the conversation is genuinely finished. Do not use for an ordinary sales objection that should still be handled.",
@@ -756,7 +777,37 @@ async function saveDeveloperCallback(ctx, args) {
   };
 }
 
+async function scheduleSalesCallback(ctx, args) {
+  if (ctx?.callMode !== "outbound" || !ctx?.leadId || !ctx?.callSid ||
+      !ctx?.closeToken || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(args?.scheduled_local || ""))) {
+    return { ok: false, status: "invalid_callback_context_or_time" };
+  }
+  try {
+    const response = await fetch("https://weblynxforge.dev/sofia-schedule-callback.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lead_id: Number(ctx.leadId),
+        call_sid: ctx.callSid,
+        close_token: ctx.closeToken,
+        scheduled_local: args.scheduled_local
+      }),
+      signal: AbortSignal.timeout(9000)
+    });
+    const data = await response.json().catch(() => ({ ok: false, status: "invalid_response" }));
+    return { ...data, http_status: response.status };
+  } catch (error) {
+    console.warn("Sofia sales callback scheduling request failed:", ctx.callSid, error?.name || "network_error");
+    return { ok: false, status: "schedule_unavailable" };
+  }
+}
+
 async function runAssistant(conversation, ctx) {
+  const localClock = new Date().toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles", weekday: "long", year: "numeric",
+    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false
+  });
+  const callbackRules = `CURRENT LAS VEGAS DATE/TIME: ${localClock}, timezone America/Los_Angeles. OUTBOUND SALES CALLBACKS: If a real human specifically requests or agrees to a callback at a clear future time, confirm the correct time (and day if ambiguous), then call schedule_sales_callback with YYYY-MM-DD HH:MM in Las Vegas local time. Example: if they correct 9:30 to 10:30, use 10:30, not 9:30. Do not merely say you will call back without calling the tool. Only say the appointment is saved after tool returns ok=true; explain that the automated call is attempted around that time, subject to calling hours and limits. If scheduling fails, honestly say it could not be confirmed and do not promise the callback. Do not schedule voicemail, DNC requests, or vague times. Do not invent a date when unclear. The sales callback scheduler is NOT the separate inbound developer-callback request.`;
   const modePrompt =
     ctx?.callMode === "agent_orientation"
       ? `CALL MODE: MANUAL HUMAN SALES AGENT ORIENTATION. You called a WebLynxForge human sales agent named ${ctx.contactName || "Agent"}, not a prospective website customer. Conduct an interactive sales-agent orientation in ${ORIENTATION_LANGUAGES[ctx.language] || "English"} ONLY. Explain the managed website service, customer plans $49, $99, $149 per month, corresponding agent commissions $10, $20, $30 respectively, sales prospecting and discovery, honest benefit explanations, handling common objections, signup steps (contact info, website details, review, verified Stripe payment, then domain selection), consent and do-not-call compliance. The agent can interrupt with questions. Do not pitch the agent a website subscription, do not send customer signup/demo SMS, do not ask the agent to buy, do not create sales leads, and do not invent commission payout timing, recurring commissions, employment promises or eligibility rules. Keep responses natural and concise in the selected language. If the agent asks to end the orientation, say a polite goodbye and use end_call.`
@@ -766,7 +817,9 @@ async function runAssistant(conversation, ctx) {
             ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan."
             : `CALL MODE: INBOUND. The caller selected the ${ctx?.department || "general"} department. Handle that purpose first, answer their need, and sell naturally only when relevant.`
         )
-      : (ctx?.offerType
+      : (ctx?.scheduledCallback
+          ? `CALL MODE: AUTOMATIC SCHEDULED SALES CALLBACK. This is NOT a cold call. You are calling ${ctx.businessName || "the business"} back at the previously agreed appointment time ${ctx.callbackLocal || ""} America/Los_Angeles. Someone previously said the owner or manager would be available. Ask politely for the owner or manager, then continue the normal WebLynxForge website discussion. Do not falsely claim to have spoken with the owner already. If they ask for another specific callback time, confirm and use schedule_sales_callback. Do not promise another call unless the scheduling tool confirms it.`
+          : ctx?.offerType
           ? `CALL MODE: MANUAL OUTBOUND CUSTOM SALES OFFER. Lead the conversation. Assigned offer: ${ctx.offerType}. Assigned business type: ${ctx.businessType}. Assigned monthly price: $${ctx.monthlyPlan}/month. Assigned demo URL: ${ctx.demoUrl || "NOT PROVIDED"}. Spoken language: English. Proactively offer the prepared demo link by SMS. After the customer says yes to receiving it, immediately use send_demo_link. If ready to signup, obtain SMS consent and use send_checkout_link. Do not substitute another price for this offer. Additional factual notes: ${ctx.salesNotes || "none"}`
           : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.");
 
@@ -779,12 +832,14 @@ async function runAssistant(conversation, ctx) {
       },
       {
         role: "system",
-        content: modePrompt
+        content: modePrompt + (ctx?.callMode === "outbound" ? "\n" + callbackRules : "")
       },
       ...conversation
     ],
     tools: ctx?.callMode === "agent_orientation"
       ? tools.filter(tool => tool.function?.name === "end_call")
+      : ctx?.callMode === "inbound"
+      ? tools.filter(tool => tool.function?.name !== "schedule_sales_callback")
       : tools,
     tool_choice: "auto",
     max_tokens: 180,
@@ -889,6 +944,16 @@ async function runAssistant(conversation, ctx) {
       result = await saveDeveloperCallback(ctx, args);
     }
 
+    if (call.function?.name === "schedule_sales_callback") {
+      let args = {};
+      try { args = JSON.parse(call.function.arguments || "{}"); } catch {}
+      result = await scheduleSalesCallback(ctx, args);
+      if (result.ok === true) {
+        // Tool response is proof of persistence; do not add a second schedule.
+        console.log("Sofia sales callback confirmed:", ctx?.callSid, result.callback_id || "existing");
+      }
+    }
+
     if (call.function?.name === "end_call") {
       let args = {};
 
@@ -938,7 +1003,7 @@ async function runAssistant(conversation, ctx) {
       },
       {
         role: "system",
-        content: modePrompt
+        content: modePrompt + (ctx?.callMode === "outbound" ? "\n" + callbackRules : "")
       },
       ...toolConversation
     ],
@@ -1238,6 +1303,8 @@ app.prepare().then(() => {
           closeEndpoint: cp.close_endpoint || "",
           closeToken: cp.close_token || "",
           callMode: cp.call_mode || "outbound",
+          scheduledCallback: cp.scheduled_callback === "1",
+          callbackLocal: String(cp.callback_local || "").slice(0, 40),
           transferFailed: cp.transfer_failed === "1",
           parentCallSid: cp.parent_call_sid || "",
           callbackEndpoint: cp.callback_endpoint || "",
