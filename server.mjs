@@ -161,6 +161,7 @@ Listen carefully to the customer and adapt the conversation to what they actuall
 LANGUAGE:
 Inbound language menu remains English and Spanish only.
 For MANUAL OUTBOUND calls, speak English only (en-US); no language selector. Keep the existing INBOUND English/Spanish language menu and departments unchanged.
+EXCEPTION: When call_mode is agent_orientation, speak ONLY the agent orientation language provided in orientation_language (English, Spanish, Korean, Mandarin Chinese, or Tagalog). Do not use the manual sales English-only restriction for these calls. Inbound language selection stays unchanged.
 For an outbound manual call, the lead context supplies the agreed offer, price, business category, demo URL and sales notes. Use these specific facts rather than a generic offer. If a $49 plan is selected, never present $99 or $149 as the quoted price for this custom offer; do not claim other plans don't exist. Never invent features, URLs or guarantees. If no demo URL is supplied, say you cannot text the demo yet.
 
 CORE SALES STRATEGY:
@@ -412,6 +413,14 @@ TRUTHFULNESS:
 Never invent facts about WebLynxForge, the customer's business, their current website, competitors, pricing, results, policies, domain availability, SEO results, or Google performance.
 
 If information is unknown, ask a concise question or state only what you know.`;
+
+const ORIENTATION_LANGUAGES = {
+  "en-US": "English",
+  "es-MX": "Spanish",
+  "ko-KR": "Korean",
+  "cmn-CN": "Mandarin Chinese",
+  "fil-PH": "Tagalog (Filipino)"
+};
 
 const tools = [
   {
@@ -749,7 +758,9 @@ async function saveDeveloperCallback(ctx, args) {
 
 async function runAssistant(conversation, ctx) {
   const modePrompt =
-    ctx?.callMode === "inbound"
+    ctx?.callMode === "agent_orientation"
+      ? `CALL MODE: MANUAL HUMAN SALES AGENT ORIENTATION. You called a WebLynxForge human sales agent named ${ctx.contactName || "Agent"}, not a prospective website customer. Conduct an interactive sales-agent orientation in ${ORIENTATION_LANGUAGES[ctx.language] || "English"} ONLY. Explain the managed website service, customer plans $49, $99, $149 per month, corresponding agent commissions $10, $20, $30 respectively, sales prospecting and discovery, honest benefit explanations, handling common objections, signup steps (contact info, website details, review, verified Stripe payment, then domain selection), consent and do-not-call compliance. The agent can interrupt with questions. Do not pitch the agent a website subscription, do not send customer signup/demo SMS, do not ask the agent to buy, do not create sales leads, and do not invent commission payout timing, recurring commissions, employment promises or eligibility rules. Keep responses natural and concise in the selected language. If the agent asks to end the orientation, say a polite goodbye and use end_call.`
+      : ctx?.callMode === "inbound"
       ? (
           ctx?.department === "agent_orientation"
             ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan."
@@ -772,7 +783,9 @@ async function runAssistant(conversation, ctx) {
       },
       ...conversation
     ],
-    tools,
+    tools: ctx?.callMode === "agent_orientation"
+      ? tools.filter(tool => tool.function?.name === "end_call")
+      : tools,
     tool_choice: "auto",
     max_tokens: 180,
     temperature: 0.7
@@ -1240,7 +1253,9 @@ app.prepare().then(() => {
             (cp.call_mode === "inbound"
               ? "Thank you for calling WebLynxForge. This is Sofia. English or Spanish?"
               : "")).slice(0, 800),
-          language: "en-US", // Manual outbound fixed English; inbound menu selects English or Spanish.
+          language: cp.call_mode === "agent_orientation" && ORIENTATION_LANGUAGES[cp.orientation_language]
+            ? cp.orientation_language
+            : "en-US", // Existing manual sales English; inbound menu unchanged.
           languageSelected: cp.call_mode !== "inbound",
           department: "",
           departmentSelected: cp.call_mode !== "inbound"
@@ -1324,7 +1339,7 @@ app.prepare().then(() => {
 
       // Mailbox prompts are not human replies. Intercept before menus,
       // OpenAI, SMS tools, or the normal outbound sales workflow.
-      if (ws.ctx.callMode === "outbound") {
+      if (ws.ctx.callMode === "outbound" || ws.ctx.callMode === "agent_orientation") {
         if (ws.ctx.voicemailDetected) return;
         if (isVoicemailGreeting(message.voicePrompt)) {
           ws.ctx.voicemailDetected = true;
@@ -1511,8 +1526,15 @@ app.prepare().then(() => {
           mode: ws.ctx.callMode || null
         });
 
-        const errText =
-          ws.ctx.language === "es-MX"
+        const errText = ws.ctx.callMode === "agent_orientation"
+          ? ({
+              "es-MX": "Lo siento, hubo un problema breve. ¿Puede repetirlo?",
+              "ko-KR": "죄송합니다. 잠시 문제가 발생했습니다. 다시 말씀해 주시겠어요?",
+              "cmn-CN": "抱歉，刚才出现了一个小问题。您能再说一遍吗？",
+              "fil-PH": "Pasensya na, may pansamantalang problema. Puwede mo bang ulitin?",
+              "en-US": "I'm sorry, I had a brief problem. Could you say that again?"
+            }[ws.ctx.language] || "Could you repeat that?")
+          : ws.ctx.language === "es-MX"
             ? "Lo siento, hubo un breve problema. ¿Puede repetirlo?"
             : "I'm sorry, I had a brief problem. Could you say that again?";
 
