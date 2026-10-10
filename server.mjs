@@ -370,6 +370,8 @@ Privacy: https://weblynxforge.dev/privacy.php
 Ask for an explicit yes or no.
 
 Only after the customer explicitly agrees to receive the text may you call the send_checkout_link tool or send_demo_link tool.
+For inbound AND outbound sales, after learning their actual needs, clearly recommend a $49, $99, or $149 monthly plan, explain the price, confirm the prospect agrees to receive that specific plan's signup link, call select_sales_plan to save it, and ONLY THEN use send_checkout_link after explicit SMS consent. Do not call send_checkout_link without a successful select_sales_plan result for the current call. If the quote tool fails, do not promise a signup SMS. A signup SMS is not the same as a pricing-information-only text.
+For Agent Orientation (inbound agent_orientation department OR manual agent_orientation call), if the person wants to register as a sales agent, offer to send their AGENT signup link by SMS. After they explicitly agree to receive that text on the number being used for this call, call send_agent_signup_link. This is the agent portal link, NOT a customer website signup link. Only claim the SMS was submitted to Twilio if the tool returns ok=true. Never send it without explicit consent. Do not promise that carriers delivered the message.
 For manual outbound sales, proactively introduce the custom website demo and offer to text its link: "We prepared a demo for your business. May I text you the link?" If they clearly say yes to receiving that SMS, use send_demo_link immediately. A yes to the text request is sufficient verbal consent for the requested demo SMS; do not ask them to repeat the same permission. Do not send the signup link unless the customer wants to proceed and has also agreed to receive that link by text. A separate consent question is unnecessary if the customer has clearly agreed to receive both links. Respect no, STOP, or requests not to contact.
 Do not claim any SMS was sent unless the corresponding tool confirms success. SMS is an optional follow-up, not a precondition for a call.
 
@@ -459,7 +461,7 @@ const tools = [
     type: "function",
     function: {
       name: "select_sales_plan",
-      description: "For OUTBOUND sales: save the $49, $99, or $149 monthly plan after discovering the customer needs and agreeing on the recommendation. Must succeed before sending a signup SMS. Do not save a plan without explaining it to the prospect.",
+      description: "For INBOUND or OUTBOUND website sales: save the agreed $49, $99, or $149 monthly plan after discovering the customer needs and explaining the recommendation. Must succeed before sending a customer signup SMS. Not for Agent Orientation or support callers.",
       parameters: {
         type: "object",
         properties: {
@@ -467,6 +469,19 @@ const tools = [
           reason: { type: "string", description: "Brief factual reason for the recommended plan, maximum 250 characters." }
         },
         required: ["monthly_plan", "reason"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_agent_signup_link",
+      description: "Send the WebLynxForge sales AGENT registration link by SMS, only during an inbound Agent Orientation department call or a manual outbound Agent Orientation call, after the person explicitly requests and consents to this text on their call number.",
+      parameters: {
+        type: "object",
+        properties: { sms_consent_confirmed: { type: "boolean" } },
+        required: ["sms_consent_confirmed"],
         additionalProperties: false
       }
     }
@@ -613,8 +628,11 @@ const tools = [
 
 async function selectSalesPlan(ctx, args) {
   const plan = Number(args?.monthly_plan);
-  if (ctx?.callMode !== "outbound" || !ctx?.leadId ||
-      !ctx?.closeToken || !ctx?.callSid || ![49, 99, 149].includes(plan)) {
+  const isSales = ctx?.callMode === "outbound" ||
+    (ctx?.callMode === "inbound" && !["agent_orientation", "support"].includes(ctx?.department));
+  if (!isSales || !ctx?.callSid || ![49, 99, 149].includes(plan) ||
+      (ctx.callMode === "outbound" && (!ctx.leadId || !ctx.closeToken)) ||
+      (ctx.callMode === "inbound" && !ctx.supportToken)) {
     return { ok: false, error: "invalid_sales_quote_context" };
   }
   try {
@@ -622,8 +640,12 @@ async function selectSalesPlan(ctx, args) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        lead_id: Number(ctx.leadId), call_sid: ctx.callSid,
-        close_token: ctx.closeToken, monthly_plan: plan,
+        call_mode: ctx.callMode,
+        lead_id: ctx.leadId ? Number(ctx.leadId) : null,
+        call_sid: ctx.callSid,
+        close_token: ctx.closeToken,
+        support_token: ctx.supportToken,
+        monthly_plan: plan,
         reason: String(args?.reason || "").slice(0, 250)
       }),
       signal: AbortSignal.timeout(9000)
@@ -631,8 +653,17 @@ async function selectSalesPlan(ctx, args) {
     const data = await response.json().catch(() => ({ ok: false, error: "invalid_quote_response" }));
     if (response.ok && data.ok === true && Number(data.monthly_plan) === plan) {
       ctx.quotedPlan = plan;
+      // A verified inbound sales quote creates/links a lead only after interest.
+      if (ctx.callMode === "inbound") {
+        ctx.leadId = String(data.lead_id || "");
+        ctx.closeToken = String(data.close_token || "");
+        ctx.closeEndpoint = String(data.close_endpoint || "");
+      }
     }
-    return { http_status: response.status, ...data };
+    // Never return a signing token to the language model's tool transcript.
+    const { close_token, ...publicResult } = data;
+    console.log("Sofia sales quote result:", ctx.callSid, response.status, data?.error || data?.status || "unknown");
+    return { http_status: response.status, ...publicResult };
   } catch (error) {
     console.warn("Sofia plan quote save failed:", ctx?.callSid, error?.name || "network_error");
     return { ok: false, error: "quote_service_unavailable" };
@@ -640,44 +671,61 @@ async function selectSalesPlan(ctx, args) {
 }
 
 async function sendCheckoutLink(ctx) {
-  if (ctx?.callMode === "outbound" && ![49, 99, 149].includes(Number(ctx?.quotedPlan))) {
+  if (ctx?.callMode !== "outbound" && ctx?.callMode !== "inbound") {
+    return { ok: false, error: "customer_signup_sales_only" };
+  }
+  if (ctx.callMode === "inbound" && ["agent_orientation", "support"].includes(ctx.department)) {
+    return { ok: false, error: "wrong_inbound_department" };
+  }
+  if (![49, 99, 149].includes(Number(ctx?.quotedPlan))) {
     return { ok: false, error: "sales_plan_not_saved" };
   }
-  if (!ctx?.leadId || !ctx?.closeToken || !ctx?.closeEndpoint) {
-    return {
-      ok: false,
-      error: "missing_lead_context"
-    };
+  if (!ctx?.leadId || !ctx?.closeToken || !ctx?.closeEndpoint || !ctx?.callSid) {
+    return { ok: false, error: "missing_lead_context" };
   }
-
-  const res = await fetch(ctx.closeEndpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      lead_id: Number(ctx.leadId),
-      close_token: ctx.closeToken,
-      message_type: "signup",
-      call_sid: ctx.callSid
-    })
-  });
-
-  let data = {};
-
   try {
-    data = await res.json();
-  } catch {
-    data = {
-      ok: false,
-      error: "invalid_close_response"
-    };
+    const res = await fetch(ctx.closeEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lead_id: Number(ctx.leadId),
+        close_token: ctx.closeToken,
+        message_type: "signup",
+        call_sid: ctx.callSid
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+    const data = await res.json().catch(() => ({ ok: false, error: "invalid_close_response" }));
+    console.log("Sofia customer signup SMS result:", ctx.callSid, res.status,
+      data?.error || data?.status || "unknown");
+    return { http_status: res.status, ...data };
+  } catch (error) {
+    console.warn("Sofia customer signup SMS transport:", ctx?.callSid, error?.name || "network_error");
+    return { ok: false, error: "sms_service_unavailable" };
   }
+}
 
-  return {
-    http_status: res.status,
-    ...data
-  };
+async function sendAgentSignupLink(ctx) {
+  const agentMode = ctx?.callMode === "agent_orientation" ||
+    (ctx?.callMode === "inbound" && ctx?.department === "agent_orientation");
+  if (!agentMode || !ctx?.callSid) return { ok: false, error: "agent_orientation_only" };
+  const token = ctx.callMode === "inbound" ? ctx.supportToken : ctx.orientationToken;
+  if (!token) return { ok: false, error: "agent_sms_auth_missing" };
+  try {
+    const res = await fetch("https://weblynxforge.dev/sofia-agent-signup-sms.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ call_sid: ctx.callSid, call_mode: ctx.callMode, token }),
+      signal: AbortSignal.timeout(15000)
+    });
+    const data = await res.json().catch(() => ({ ok: false, error: "invalid_agent_sms_response" }));
+    console.log("Sofia agent signup SMS result:", ctx.callSid, res.status,
+      data?.error || data?.status || "unknown");
+    return { http_status: res.status, ...data };
+  } catch (error) {
+    console.warn("Sofia agent signup SMS transport:", ctx?.callSid, error?.name || "network_error");
+    return { ok: false, error: "agent_sms_service_unavailable" };
+  }
 }
 
 async function sendDemoLink(ctx) {
@@ -869,12 +917,12 @@ async function runAssistant(conversation, ctx) {
   const callbackRules = `CURRENT LAS VEGAS DATE/TIME: ${localClock}, timezone America/Los_Angeles. OUTBOUND SALES CALLBACKS: If a real human specifically requests or agrees to a callback at a clear future time, confirm the correct time (and day if ambiguous), then call schedule_sales_callback with YYYY-MM-DD HH:MM in Las Vegas local time. Example: if they correct 9:30 to 10:30, use 10:30, not 9:30. Do not merely say you will call back without calling the tool. Only say the appointment is saved after tool returns ok=true; explain that the automated call is attempted around that time, subject to calling hours and limits. If scheduling fails, honestly say it could not be confirmed and do not promise the callback. Do not schedule voicemail, DNC requests, or vague times. Do not invent a date when unclear. The sales callback scheduler is NOT the separate inbound developer-callback request.`;
   const modePrompt =
     ctx?.callMode === "agent_orientation"
-      ? `CALL MODE: MANUAL HUMAN SALES AGENT ORIENTATION. You called a WebLynxForge human sales agent named ${ctx.contactName || "Agent"}, not a prospective website customer. Conduct an interactive sales-agent orientation in ${ORIENTATION_LANGUAGES[ctx.language] || "English"} ONLY. Explain the managed website service, customer plans $49, $99, $149 per month, corresponding agent commissions $10, $20, $30 respectively, how to qualify $49 stable-content sites versus $99 frequent-updates or proposed realtor lead discovery, sales prospecting and discovery, honest benefit explanations, handling common objections, signup steps (contact info, website details, review, verified Stripe payment, then domain selection), consent and do-not-call compliance. The agent can interrupt with questions. Do not pitch the agent a website subscription, do not send customer signup/demo SMS, do not ask the agent to buy, do not create sales leads, and do not invent commission payout timing, recurring commissions, employment promises or eligibility rules. Keep responses natural and concise in the selected language. If the agent asks to end the orientation, say a polite goodbye and use end_call.`
+      ? `CALL MODE: MANUAL HUMAN SALES AGENT ORIENTATION. You called a WebLynxForge human sales agent named ${ctx.contactName || "Agent"}, not a prospective website customer. Conduct an interactive sales-agent orientation in ${ORIENTATION_LANGUAGES[ctx.language] || "English"} ONLY. Explain the managed website service, customer plans $49, $99, $149 per month, corresponding agent commissions $10, $20, $30 respectively, how to qualify $49 stable-content sites versus $99 frequent-updates or proposed realtor lead discovery, sales prospecting and discovery, honest benefit explanations, handling common objections, signup steps (contact info, website details, review, verified Stripe payment, then domain selection), consent and do-not-call compliance. The agent can interrupt with questions. Do not pitch the agent a website subscription, do not send customer signup/demo SMS, do not ask the agent to buy, do not create sales leads. If the agent wants to sign up, offer to text https://weblynxforge.dev/agent/signup.php to the number called, then use send_agent_signup_link ONLY after explicit SMS consent. Never claim it was sent unless the tool succeeds; and do not invent commission payout timing, recurring commissions, employment promises or eligibility rules. Keep responses natural and concise in the selected language. If the agent asks to end the orientation, say a polite goodbye and use end_call.`
       : ctx?.callMode === "inbound"
       ? (
           ctx?.department === "agent_orientation"
-            ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan."
-            : `CALL MODE: INBOUND. The caller selected the ${ctx?.department || "general"} department. Handle that purpose first, answer their need, and sell naturally only when relevant.`
+            ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan. If they want to become an agent, offer to text the agent signup link to the number they called from; after explicit consent use send_agent_signup_link. Do not send a customer signup link."
+            : `CALL MODE: INBOUND. The caller selected the ${ctx?.department || "general"} department. Handle that purpose first, answer their need, and sell naturally only when relevant. For a genuine website sales inquiry, discover update frequency and features, recommend the agreed $49, $99, or $149 plan, use select_sales_plan to save it, then offer to text the correct signup link with explicit SMS consent and use send_checkout_link. For realtors ask about frequent listing changes and interest in potential weekly leads; do not claim an undeployed lead service is active. Do not create a sales lead for support-only callers.`
         )
       : (ctx?.scheduledCallback
           ? `CALL MODE: AUTOMATIC SCHEDULED SALES CALLBACK. This is NOT a cold call. You are calling ${ctx.businessName || "the business"} back at the previously agreed appointment time ${ctx.callbackLocal || ""} America/Los_Angeles. Someone previously said the owner or manager would be available. Ask politely for the owner or manager, then continue the normal WebLynxForge website discussion. Do not falsely claim to have spoken with the owner already. If they ask for another specific callback time, confirm and use schedule_sales_callback. Do not promise another call unless the scheduling tool confirms it.`
@@ -896,10 +944,18 @@ async function runAssistant(conversation, ctx) {
       ...conversation
     ],
     tools: ctx?.callMode === "agent_orientation"
-      ? tools.filter(tool => tool.function?.name === "end_call")
+      ? tools.filter(tool => ["send_agent_signup_link", "end_call"].includes(tool.function?.name))
       : ctx?.callMode === "inbound"
-      ? tools.filter(tool => !["schedule_sales_callback", "select_sales_plan"].includes(tool.function?.name))
-      : tools,
+      ? tools.filter(tool => {
+          const name = tool.function?.name;
+          if (name === "schedule_sales_callback" || name === "send_demo_link") return false;
+          if (ctx.department === "agent_orientation")
+            return ["send_agent_signup_link", "end_call", "transfer_to_developer"].includes(name);
+          if (name === "send_agent_signup_link") return false;
+          if (ctx.department === "support" && ["select_sales_plan", "send_checkout_link"].includes(name)) return false;
+          return true;
+        })
+      : tools.filter(tool => tool.function?.name !== "send_agent_signup_link"),
     tool_choice: "auto",
     max_tokens: 180,
     temperature: 0.7
@@ -950,6 +1006,14 @@ async function runAssistant(conversation, ctx) {
       let args = {};
       try { args = JSON.parse(call.function.arguments || "{}"); } catch {}
       result = await selectSalesPlan(ctx, args);
+    }
+
+    if (call.function?.name === "send_agent_signup_link") {
+      let args = {};
+      try { args = JSON.parse(call.function.arguments || "{}"); } catch {}
+      result = args.sms_consent_confirmed === true
+        ? await sendAgentSignupLink(ctx)
+        : { ok: false, error: "sms_consent_not_confirmed" };
     }
 
     if (call.function?.name === "send_demo_link") {
@@ -1376,6 +1440,7 @@ app.prepare().then(() => {
           callbackToken: cp.callback_token || "",
           supportEndpoint: cp.support_endpoint || "",
           supportToken: cp.support_token || "",
+          orientationToken: cp.orientation_token || "",
           businessType: String(cp.business_type || "").slice(0, 100),
           offerType: String(cp.offer_type || "").slice(0, 120),
           monthlyPlan: "", // The form no longer assigns a sales price.
