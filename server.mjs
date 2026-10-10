@@ -221,8 +221,7 @@ Sales and Billing, Agent Orientation, Pricing Plans, Technical Support, or Gener
 Respect the selected department and handle that purpose first.
 
 AGENT ORIENTATION:
-When the selected inbound department is Agent Orientation, the caller is a WebLynxForge agent or prospective agent, not a customer sales prospect.
-Do not try to sell the agent a customer website plan.
+When the selected inbound department is Agent Orientation, start by orienting the agent, not by pitching a customer website. If the same person independently asks to purchase a website, switch to website sales and assist fully. A person may be both an agent and a website customer.
 Orient the agent clearly and conversationally about WebLynxForge, how to present the service to prospects, the sales process, the customer plan prices, agent commissions, common objections, and questions the agent asks.
 The current customer plan prices are $49, $99, and $149 per month.
 The corresponding agent commissions are $10, $20, and $30.
@@ -370,14 +369,14 @@ Privacy: https://weblynxforge.dev/privacy.php
 Ask for an explicit yes or no.
 
 Only after the customer explicitly agrees to receive the text may you call the send_checkout_link tool or send_demo_link tool.
-For inbound AND outbound sales, after learning their actual needs, clearly recommend a $49, $99, or $149 monthly plan, explain the price, confirm the prospect agrees to receive that specific plan's signup link, call select_sales_plan to save it, and ONLY THEN use send_checkout_link after explicit SMS consent. Do not call send_checkout_link without a successful select_sales_plan result for the current call. If the quote tool fails, do not promise a signup SMS. A signup SMS is not the same as a pricing-information-only text. If the customer changes their mind and chooses a DIFFERENT plan later in the same call, you MUST call select_sales_plan again with the newly agreed price, then (with clear consent to that new link) call send_checkout_link again. Multiple different plan signup SMS messages to the same consenting caller are allowed. A previously sent $49 link does NOT prevent sending an agreed $99 or $149 link. A repeat of the SAME plan in the SAME call may return already_sent; do not promise another identical text when that happens. Never claim an SMS was sent when the tool reports a failure or sms_send_in_progress.
-For Agent Orientation (inbound agent_orientation department OR manual agent_orientation call), if the person wants to register as a sales agent, offer to send their AGENT signup link by SMS. After they explicitly agree to receive that text on the number being used for this call, call send_agent_signup_link. This is the agent portal link, NOT a customer website signup link. Only claim the SMS was submitted to Twilio if the tool returns ok=true. Never send it without explicit consent. Do not promise that carriers delivered the message.
+For website sales during ANY call mode, even if it started as Agent Orientation or Technical Support, after learning their actual needs, clearly recommend a $49, $99, or $149 monthly plan, explain the price, confirm the prospect agrees to receive that specific plan's signup link, call select_sales_plan to save it, and ONLY THEN use send_checkout_link after explicit SMS consent. Do not call send_checkout_link without a successful select_sales_plan result for the current call. If the quote tool fails, do not promise a signup SMS. A signup SMS is not the same as a pricing-information-only text. If the customer changes their mind and chooses a DIFFERENT plan later in the same call, you MUST call select_sales_plan again with the newly agreed price, then (with clear consent to that new link) call send_checkout_link again. Multiple different plan signup SMS messages to the same consenting caller are allowed. A previously sent $49 link does NOT prevent sending an agreed $99 or $149 link. A repeat of the SAME plan in the SAME call may return already_sent; do not promise another identical text when that happens. Never claim an SMS was sent when the tool reports a failure or sms_send_in_progress.
+For ANY call (agent orientation, inbound, or outbound website sales), if the person wants to register as a sales agent, offer to send their AGENT signup link by SMS. After they explicitly agree to receive that text on the number being used for this call, call send_agent_signup_link. This is the agent portal link, NOT a customer website signup link. Only claim the SMS was submitted to Twilio if the tool returns ok=true. Never send it without explicit consent. Do not promise that carriers delivered the message.
 For manual outbound sales, proactively introduce the custom website demo and offer to text its link: "We prepared a demo for your business. May I text you the link?" If they clearly say yes to receiving that SMS, use send_demo_link immediately. A yes to the text request is sufficient verbal consent for the requested demo SMS; do not ask them to repeat the same permission. Do not send the signup link unless the customer wants to proceed and has also agreed to receive that link by text. A separate consent question is unnecessary if the customer has clearly agreed to receive both links. Respect no, STOP, or requests not to contact.
 Do not claim any SMS was sent unless the corresponding tool confirms success. SMS is an optional follow-up, not a precondition for a call.
 
 Agreement to purchase the WebLynxForge service by itself is NOT SMS consent.
 
-After the tool reports checkout_sent or already_sent, tell the customer that the secure WebLynxForge signup link was sent to their number.
+After checkout_sent or already_sent, say Twilio accepted the requested signup text; do not guarantee phone delivery. If they say they did not receive it, acknowledge that carrier delivery may be delayed or blocked. Never invent a second send. If the plan changes, quote and text the newly agreed plan with fresh consent.
 After the tool reports demo_sent or demo_already_sent, tell the customer their requested demo link was sent.
 
 Briefly explain that they will enter their information and website details, review them, continue to secure checkout, and after payment is confirmed choose their included domain.
@@ -461,7 +460,7 @@ const tools = [
     type: "function",
     function: {
       name: "select_sales_plan",
-      description: "For INBOUND or OUTBOUND website sales: save the agreed $49, $99, or $149 monthly plan after discovering the customer needs and explaining the recommendation. Must succeed before sending a customer signup SMS. Not for Agent Orientation or support callers.",
+      description: "For INBOUND or OUTBOUND website sales: save the agreed $49, $99, or $149 monthly plan after discovering the customer needs and explaining the recommendation. Must succeed before sending a customer signup SMS. Available in any call type when the person genuinely requests a customer website plan, including a call that began as Agent Orientation or support.",
       parameters: {
         type: "object",
         properties: {
@@ -477,7 +476,7 @@ const tools = [
     type: "function",
     function: {
       name: "send_agent_signup_link",
-      description: "Send the WebLynxForge sales AGENT registration link by SMS, only during an inbound Agent Orientation department call or a manual outbound Agent Orientation call, after the person explicitly requests and consents to this text on their call number.",
+      description: "Send the WebLynxForge sales AGENT registration link by SMS, during any verified inbound, outbound sales, or manual Agent Orientation call when the person explicitly wants to register as an agent and consents to receive the link on the call number.",
       parameters: {
         type: "object",
         properties: { sms_consent_confirmed: { type: "boolean" } },
@@ -628,11 +627,11 @@ const tools = [
 
 async function selectSalesPlan(ctx, args) {
   const plan = Number(args?.monthly_plan);
-  const isSales = ctx?.callMode === "outbound" ||
-    (ctx?.callMode === "inbound" && !["agent_orientation", "support"].includes(ctx?.department));
+  const isSales = ["outbound", "inbound", "agent_orientation"].includes(ctx?.callMode);
   if (!isSales || !ctx?.callSid || ![49, 99, 149].includes(plan) ||
       (ctx.callMode === "outbound" && (!ctx.leadId || !ctx.closeToken)) ||
-      (ctx.callMode === "inbound" && !ctx.supportToken)) {
+      (ctx.callMode === "inbound" && !ctx.supportToken) ||
+      (ctx.callMode === "agent_orientation" && !ctx.orientationToken)) {
     return { ok: false, error: "invalid_sales_quote_context" };
   }
   try {
@@ -645,6 +644,7 @@ async function selectSalesPlan(ctx, args) {
         call_sid: ctx.callSid,
         close_token: ctx.closeToken,
         support_token: ctx.supportToken,
+        orientation_token: ctx.orientationToken,
         monthly_plan: plan,
         reason: String(args?.reason || "").slice(0, 250)
       }),
@@ -654,7 +654,7 @@ async function selectSalesPlan(ctx, args) {
     if (response.ok && data.ok === true && Number(data.monthly_plan) === plan) {
       ctx.quotedPlan = plan;
       // A verified inbound sales quote creates/links a lead only after interest.
-      if (ctx.callMode === "inbound") {
+      if (ctx.callMode === "inbound" || ctx.callMode === "agent_orientation") {
         ctx.leadId = String(data.lead_id || "");
         ctx.closeToken = String(data.close_token || "");
         ctx.closeEndpoint = String(data.close_endpoint || "");
@@ -671,11 +671,8 @@ async function selectSalesPlan(ctx, args) {
 }
 
 async function sendCheckoutLink(ctx) {
-  if (ctx?.callMode !== "outbound" && ctx?.callMode !== "inbound") {
+  if (!["outbound", "inbound", "agent_orientation"].includes(ctx?.callMode)) {
     return { ok: false, error: "customer_signup_sales_only" };
-  }
-  if (ctx.callMode === "inbound" && ["agent_orientation", "support"].includes(ctx.department)) {
-    return { ok: false, error: "wrong_inbound_department" };
   }
   if (![49, 99, 149].includes(Number(ctx?.quotedPlan))) {
     return { ok: false, error: "sales_plan_not_saved" };
@@ -706,16 +703,22 @@ async function sendCheckoutLink(ctx) {
 }
 
 async function sendAgentSignupLink(ctx) {
-  const agentMode = ctx?.callMode === "agent_orientation" ||
-    (ctx?.callMode === "inbound" && ctx?.department === "agent_orientation");
-  if (!agentMode || !ctx?.callSid) return { ok: false, error: "agent_orientation_only" };
-  const token = ctx.callMode === "inbound" ? ctx.supportToken : ctx.orientationToken;
-  if (!token) return { ok: false, error: "agent_sms_auth_missing" };
+  if (!["agent_orientation", "inbound", "outbound"].includes(ctx?.callMode) || !ctx?.callSid) {
+    return { ok: false, error: "agent_sms_auth_missing" };
+  }
+  const token = ctx.callMode === "inbound" ? ctx.supportToken
+    : ctx.callMode === "agent_orientation" ? ctx.orientationToken : ctx.closeToken;
+  if (!token || (ctx.callMode === "outbound" && !ctx.leadId)) {
+    return { ok: false, error: "agent_sms_auth_missing" };
+  }
   try {
     const res = await fetch("https://weblynxforge.dev/sofia-agent-signup-sms.php", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ call_sid: ctx.callSid, call_mode: ctx.callMode, token }),
+      body: JSON.stringify({
+        call_sid: ctx.callSid, call_mode: ctx.callMode, token,
+        lead_id: ctx.callMode === "outbound" ? Number(ctx.leadId) : null
+      }),
       signal: AbortSignal.timeout(15000)
     });
     const data = await res.json().catch(() => ({ ok: false, error: "invalid_agent_sms_response" }));
@@ -917,11 +920,11 @@ async function runAssistant(conversation, ctx) {
   const callbackRules = `CURRENT LAS VEGAS DATE/TIME: ${localClock}, timezone America/Los_Angeles. OUTBOUND SALES CALLBACKS: If a real human specifically requests or agrees to a callback at a clear future time, confirm the correct time (and day if ambiguous), then call schedule_sales_callback with YYYY-MM-DD HH:MM in Las Vegas local time. Example: if they correct 9:30 to 10:30, use 10:30, not 9:30. Do not merely say you will call back without calling the tool. Only say the appointment is saved after tool returns ok=true; explain that the automated call is attempted around that time, subject to calling hours and limits. If scheduling fails, honestly say it could not be confirmed and do not promise the callback. Do not schedule voicemail, DNC requests, or vague times. Do not invent a date when unclear. The sales callback scheduler is NOT the separate inbound developer-callback request.`;
   const modePrompt =
     ctx?.callMode === "agent_orientation"
-      ? `CALL MODE: MANUAL HUMAN SALES AGENT ORIENTATION. You called a WebLynxForge human sales agent named ${ctx.contactName || "Agent"}, not a prospective website customer. Conduct an interactive sales-agent orientation in ${ORIENTATION_LANGUAGES[ctx.language] || "English"} ONLY. Explain the managed website service, customer plans $49, $99, $149 per month, corresponding agent commissions $10, $20, $30 respectively, how to qualify $49 stable-content sites versus $99 frequent-updates or proposed realtor lead discovery, sales prospecting and discovery, honest benefit explanations, handling common objections, signup steps (contact info, website details, review, verified Stripe payment, then domain selection), consent and do-not-call compliance. The agent can interrupt with questions. Do not pitch the agent a website subscription, do not send customer signup/demo SMS, do not ask the agent to buy, do not create sales leads. If the agent wants to sign up, offer to text https://weblynxforge.dev/agent/signup.php to the number called, then use send_agent_signup_link ONLY after explicit SMS consent. Never claim it was sent unless the tool succeeds; and do not invent commission payout timing, recurring commissions, employment promises or eligibility rules. Keep responses natural and concise in the selected language. If the agent asks to end the orientation, say a polite goodbye and use end_call.`
+      ? `CALL MODE: MANUAL HUMAN SALES AGENT ORIENTATION. You called a WebLynxForge human sales agent named ${ctx.contactName || "Agent"}, not a prospective website customer. Conduct an interactive sales-agent orientation in ${ORIENTATION_LANGUAGES[ctx.language] || "English"} ONLY. Explain the managed website service, customer plans $49, $99, $149 per month, corresponding agent commissions $10, $20, $30 respectively, how to qualify $49 stable-content sites versus $99 frequent-updates or proposed realtor lead discovery, sales prospecting and discovery, honest benefit explanations, handling common objections, signup steps (contact info, website details, review, verified Stripe payment, then domain selection), consent and do-not-call compliance. The agent can interrupt with questions. Do not proactively pitch the agent a website subscription; if the agent independently asks to buy a website, qualify their needs, save the agreed plan, and send the customer signup SMS with explicit consent. The agent may receive BOTH an agent registration link and website plan links in the same call. If the agent wants to sign up, offer to text https://weblynxforge.dev/agent/signup.php to the number called, then use send_agent_signup_link ONLY after explicit SMS consent. Never claim it was sent unless the tool succeeds; and do not invent commission payout timing, recurring commissions, employment promises or eligibility rules. Keep responses natural and concise in the selected language. If the agent asks to end the orientation, say a polite goodbye and use end_call.`
       : ctx?.callMode === "inbound"
       ? (
           ctx?.department === "agent_orientation"
-            ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not try to sell them a website plan. If they want to become an agent, offer to text the agent signup link to the number they called from; after explicit consent use send_agent_signup_link. Do not send a customer signup link."
+            ? "CALL MODE: INBOUND AGENT ORIENTATION. The caller selected Agent Orientation. Treat the caller as a WebLynxForge agent or prospective agent, not as a customer sales prospect. Orient them about WebLynxForge, customer plans, corresponding agent commissions, sales process, objections, and answer their questions. Do not proactively sell them a website plan. If they want to become an agent, offer to text the agent signup link to the number they called from; after explicit consent use send_agent_signup_link. If the caller independently requests a website for themselves, qualify the request, save the agreed plan, and offer a website signup SMS separately; both SMS types may be sent in this call with consent."
             : `CALL MODE: INBOUND. The caller selected the ${ctx?.department || "general"} department. Handle that purpose first, answer their need, and sell naturally only when relevant. For a genuine website sales inquiry, discover update frequency and features, recommend the agreed $49, $99, or $149 plan, use select_sales_plan to save it, then offer to text the correct signup link with explicit SMS consent and use send_checkout_link. For realtors ask about frequent listing changes and interest in potential weekly leads; do not claim an undeployed lead service is active. Do not create a sales lead for support-only callers.`
         )
       : (ctx?.scheduledCallback
@@ -939,23 +942,23 @@ async function runAssistant(conversation, ctx) {
       },
       {
         role: "system",
-        content: modePrompt + (ctx?.callMode === "outbound" ? "\n" + callbackRules : "")
+        content: modePrompt + "\nIMPORTANT LIVE INTENT SWITCH: The call's initial category is NOT a permanent restriction. If an agent asks for their own website, help them buy it, select_sales_plan, then send_checkout_link after explicit consent. If a website customer asks to become an agent, send_agent_signup_link after explicit consent. Both links may be sent in one call. A new plan requires a new quote and new consent; do not treat a prior text as a lock. Never say SMS was delivered; only report provider acceptance. Do not pitch a service that the caller has not requested."
+          + (ctx?.callMode === "outbound" ? "\n" + callbackRules : "")
       },
       ...conversation
     ],
-    tools: ctx?.callMode === "agent_orientation"
-      ? tools.filter(tool => ["send_agent_signup_link", "end_call"].includes(tool.function?.name))
-      : ctx?.callMode === "inbound"
-      ? tools.filter(tool => {
-          const name = tool.function?.name;
-          if (name === "schedule_sales_callback" || name === "send_demo_link") return false;
-          if (ctx.department === "agent_orientation")
-            return ["send_agent_signup_link", "end_call", "transfer_to_developer"].includes(name);
-          if (name === "send_agent_signup_link") return false;
-          if (ctx.department === "support" && ["select_sales_plan", "send_checkout_link"].includes(name)) return false;
-          return true;
-        })
-      : tools.filter(tool => tool.function?.name !== "send_agent_signup_link"),
+    // Initial call mode controls the greeting, not what a person may ask for later.
+    // Keep the authenticated SMS tools available across agent/website transitions.
+    tools: tools.filter(tool => {
+      const name = tool.function?.name;
+      if (ctx?.callMode === "agent_orientation") {
+        return ["send_agent_signup_link", "select_sales_plan", "send_checkout_link", "end_call"].includes(name);
+      }
+      if (ctx?.callMode === "inbound") {
+        return !["schedule_sales_callback", "send_demo_link"].includes(name);
+      }
+      return true;
+    }),
     tool_choice: "auto",
     max_tokens: 180,
     temperature: 0.7
@@ -1132,7 +1135,8 @@ async function runAssistant(conversation, ctx) {
       },
       {
         role: "system",
-        content: modePrompt + (ctx?.callMode === "outbound" ? "\n" + callbackRules : "")
+        content: modePrompt + "\nIMPORTANT LIVE INTENT SWITCH: The call's initial category is NOT a permanent restriction. If an agent asks for their own website, help them buy it, select_sales_plan, then send_checkout_link after explicit consent. If a website customer asks to become an agent, send_agent_signup_link after explicit consent. Both links may be sent in one call. A new plan requires a new quote and new consent; do not treat a prior text as a lock. Never say SMS was delivered; only report provider acceptance. Do not pitch a service that the caller has not requested."
+          + (ctx?.callMode === "outbound" ? "\n" + callbackRules : "")
       },
       ...toolConversation
     ],
