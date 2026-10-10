@@ -162,7 +162,7 @@ LANGUAGE:
 Inbound language menu remains English and Spanish only.
 For MANUAL OUTBOUND calls, speak English only (en-US); no language selector. Keep the existing INBOUND English/Spanish language menu and departments unchanged.
 EXCEPTION: When call_mode is agent_orientation, speak ONLY the agent orientation language provided in orientation_language (English, Spanish, Korean, Mandarin Chinese, or Tagalog). Do not use the manual sales English-only restriction for these calls. Inbound language selection stays unchanged.
-For an outbound manual call, the lead context supplies the agreed offer, price, business category, demo URL and sales notes. Use these specific facts rather than a generic offer. If a $49 plan is selected, never present $99 or $149 as the quoted price for this custom offer; do not claim other plans don't exist. Never invent features, URLs or guarantees. If no demo URL is supplied, say you cannot text the demo yet.
+For outbound manual calls, the lead context supplies the business category, service type, demo URL and sales notes, but NOT a fixed monthly price. You MUST qualify the customer and recommend $49, $99 or $149 based on their actual needs. Never invent features, URLs or guarantees. If no demo URL is supplied, say you cannot text the demo yet.
 
 CORE SALES STRATEGY:
 Your goal is to professionally convert qualified prospects into WebLynxForge customers.
@@ -313,7 +313,18 @@ Google controls its own verification, search results, and ranking systems.
 PRICING AND PLANS:
 WebLynxForge has three customer plan prices: $49 per month, $99 per month, and $149 per month.
 
-When a caller asks about pricing, clearly explain the available plan prices and only describe plan-specific features that are actually defined in the current WebLynxForge offer. Never invent differences between plans.
+SMART PLAN QUALIFICATION (ALL SALES CALLS):
+Before recommending a plan, naturally ask how often the business needs website content updated, such as menus, services, inventory, photos, or property listings. Ask only the relevant follow-up questions; do not interrogate.
+- $49/month: suitable for a straightforward managed website with relatively stable content and infrequent changes, such as a café whose menu rarely changes.
+- $99/month: recommend when a customer needs regular content/listing changes or wants the proposed weekly real-estate lead-discovery feature. For real estate, ask whether they regularly add new properties or remove sold listings, AND whether weekly potential property/seller opportunities would be helpful. Explain that these are potential opportunities, not guaranteed buyers or sellers.
+- $149/month: only discuss for genuinely more advanced/custom requirements after clarifying the exact features and scope; do NOT invent included advanced functionality.
+A real-estate business is NOT automatically a $99 sale based only on its category. Recommend based on needs. Do not quote $49 for weekly real-estate lead discovery; that is the proposed $99 tier.
+The weekly real-estate lead hunter is a proposed feature under development, not a verified live service. NEVER claim it is already running, delivering 15 leads per week, guaranteed, or included in an active subscription until deployment and scope are confirmed. You may explain the planned $99 offering and say availability must be confirmed before signup.
+Never promise unlimited edits, unlimited property listings, guaranteed lead quantities, custom integrations, or feature delivery times without an approved service scope.
+For ALL OUTBOUND sales calls (manual, automatic, and scheduled callbacks), after the customer has indicated interest in a specific plan, call select_sales_plan to save the actual quoted plan before sending a signup SMS. Only tell the customer a quote was saved if the tool reports ok=true. Do not call send_checkout_link until the plan is successfully saved. If quote saving fails, do not send a signup SMS with an uncertain plan; offer to follow up instead.
+For inbound calls, recommend plans conversationally, but do not imply a quote was saved unless a tool confirms it. If the prospect changes requirements during the call, revise the recommendation and save the updated quote before texting signup.
+
+When a caller asks about pricing, answer directly with the three prices, then ask about update frequency and features to recommend the best fit. Do not represent proposed features as already deployed.
 
 The established managed website service includes a modern professional website, an eligible standard domain and its renewal while the qualifying service remains active, hosting, security, maintenance, basic SEO foundations, and ongoing reasonable website content updates.
 
@@ -440,6 +451,22 @@ const tools = [
           }
         },
         required: ["sms_consent_confirmed"],
+        additionalProperties: false
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "select_sales_plan",
+      description: "For OUTBOUND sales: save the $49, $99, or $149 monthly plan after discovering the customer needs and agreeing on the recommendation. Must succeed before sending a signup SMS. Do not save a plan without explaining it to the prospect.",
+      parameters: {
+        type: "object",
+        properties: {
+          monthly_plan: { type: "integer", enum: [49, 99, 149] },
+          reason: { type: "string", description: "Brief factual reason for the recommended plan, maximum 250 characters." }
+        },
+        required: ["monthly_plan", "reason"],
         additionalProperties: false
       }
     }
@@ -584,7 +611,38 @@ const tools = [
   }
 ];
 
+async function selectSalesPlan(ctx, args) {
+  const plan = Number(args?.monthly_plan);
+  if (ctx?.callMode !== "outbound" || !ctx?.leadId ||
+      !ctx?.closeToken || !ctx?.callSid || ![49, 99, 149].includes(plan)) {
+    return { ok: false, error: "invalid_sales_quote_context" };
+  }
+  try {
+    const response = await fetch("https://weblynxforge.dev/sofia-quote-plan.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lead_id: Number(ctx.leadId), call_sid: ctx.callSid,
+        close_token: ctx.closeToken, monthly_plan: plan,
+        reason: String(args?.reason || "").slice(0, 250)
+      }),
+      signal: AbortSignal.timeout(9000)
+    });
+    const data = await response.json().catch(() => ({ ok: false, error: "invalid_quote_response" }));
+    if (response.ok && data.ok === true && Number(data.monthly_plan) === plan) {
+      ctx.quotedPlan = plan;
+    }
+    return { http_status: response.status, ...data };
+  } catch (error) {
+    console.warn("Sofia plan quote save failed:", ctx?.callSid, error?.name || "network_error");
+    return { ok: false, error: "quote_service_unavailable" };
+  }
+}
+
 async function sendCheckoutLink(ctx) {
+  if (ctx?.callMode === "outbound" && ![49, 99, 149].includes(Number(ctx?.quotedPlan))) {
+    return { ok: false, error: "sales_plan_not_saved" };
+  }
   if (!ctx?.leadId || !ctx?.closeToken || !ctx?.closeEndpoint) {
     return {
       ok: false,
@@ -600,7 +658,8 @@ async function sendCheckoutLink(ctx) {
     body: JSON.stringify({
       lead_id: Number(ctx.leadId),
       close_token: ctx.closeToken,
-      message_type: "signup"
+      message_type: "signup",
+      call_sid: ctx.callSid
     })
   });
 
@@ -810,7 +869,7 @@ async function runAssistant(conversation, ctx) {
   const callbackRules = `CURRENT LAS VEGAS DATE/TIME: ${localClock}, timezone America/Los_Angeles. OUTBOUND SALES CALLBACKS: If a real human specifically requests or agrees to a callback at a clear future time, confirm the correct time (and day if ambiguous), then call schedule_sales_callback with YYYY-MM-DD HH:MM in Las Vegas local time. Example: if they correct 9:30 to 10:30, use 10:30, not 9:30. Do not merely say you will call back without calling the tool. Only say the appointment is saved after tool returns ok=true; explain that the automated call is attempted around that time, subject to calling hours and limits. If scheduling fails, honestly say it could not be confirmed and do not promise the callback. Do not schedule voicemail, DNC requests, or vague times. Do not invent a date when unclear. The sales callback scheduler is NOT the separate inbound developer-callback request.`;
   const modePrompt =
     ctx?.callMode === "agent_orientation"
-      ? `CALL MODE: MANUAL HUMAN SALES AGENT ORIENTATION. You called a WebLynxForge human sales agent named ${ctx.contactName || "Agent"}, not a prospective website customer. Conduct an interactive sales-agent orientation in ${ORIENTATION_LANGUAGES[ctx.language] || "English"} ONLY. Explain the managed website service, customer plans $49, $99, $149 per month, corresponding agent commissions $10, $20, $30 respectively, sales prospecting and discovery, honest benefit explanations, handling common objections, signup steps (contact info, website details, review, verified Stripe payment, then domain selection), consent and do-not-call compliance. The agent can interrupt with questions. Do not pitch the agent a website subscription, do not send customer signup/demo SMS, do not ask the agent to buy, do not create sales leads, and do not invent commission payout timing, recurring commissions, employment promises or eligibility rules. Keep responses natural and concise in the selected language. If the agent asks to end the orientation, say a polite goodbye and use end_call.`
+      ? `CALL MODE: MANUAL HUMAN SALES AGENT ORIENTATION. You called a WebLynxForge human sales agent named ${ctx.contactName || "Agent"}, not a prospective website customer. Conduct an interactive sales-agent orientation in ${ORIENTATION_LANGUAGES[ctx.language] || "English"} ONLY. Explain the managed website service, customer plans $49, $99, $149 per month, corresponding agent commissions $10, $20, $30 respectively, how to qualify $49 stable-content sites versus $99 frequent-updates or proposed realtor lead discovery, sales prospecting and discovery, honest benefit explanations, handling common objections, signup steps (contact info, website details, review, verified Stripe payment, then domain selection), consent and do-not-call compliance. The agent can interrupt with questions. Do not pitch the agent a website subscription, do not send customer signup/demo SMS, do not ask the agent to buy, do not create sales leads, and do not invent commission payout timing, recurring commissions, employment promises or eligibility rules. Keep responses natural and concise in the selected language. If the agent asks to end the orientation, say a polite goodbye and use end_call.`
       : ctx?.callMode === "inbound"
       ? (
           ctx?.department === "agent_orientation"
@@ -820,8 +879,8 @@ async function runAssistant(conversation, ctx) {
       : (ctx?.scheduledCallback
           ? `CALL MODE: AUTOMATIC SCHEDULED SALES CALLBACK. This is NOT a cold call. You are calling ${ctx.businessName || "the business"} back at the previously agreed appointment time ${ctx.callbackLocal || ""} America/Los_Angeles. Someone previously said the owner or manager would be available. Ask politely for the owner or manager, then continue the normal WebLynxForge website discussion. Do not falsely claim to have spoken with the owner already. If they ask for another specific callback time, confirm and use schedule_sales_callback. Do not promise another call unless the scheduling tool confirms it.`
           : ctx?.offerType
-          ? `CALL MODE: MANUAL OUTBOUND CUSTOM SALES OFFER. Lead the conversation. Assigned offer: ${ctx.offerType}. Assigned business type: ${ctx.businessType}. Assigned monthly price: $${ctx.monthlyPlan}/month. Assigned demo URL: ${ctx.demoUrl || "NOT PROVIDED"}. Spoken language: English. Proactively offer the prepared demo link by SMS. After the customer says yes to receiving it, immediately use send_demo_link. If ready to signup, obtain SMS consent and use send_checkout_link. Do not substitute another price for this offer. Additional factual notes: ${ctx.salesNotes || "none"}`
-          : "CALL MODE: OUTBOUND SALES. You called the prospect. Lead the conversation proactively. Do not ask generic courtesy questions. Do not lead with price. Use the direct WebLynxForge opening and then move into concise discovery and value-based selling.");
+          ? `CALL MODE: MANUAL OUTBOUND SMART-PRICING SALES. Lead the conversation. Assigned offer: ${ctx.offerType}. Business type: ${ctx.businessType}. NO PRICE HAS BEEN SELECTED YET. Ask about how often they add, remove or change content and about relevant features. Recommend $49 for mostly stable content, $99 for frequent updates and/or the proposed weekly real-estate lead-discovery service, and discuss $149 only for confirmed advanced requirements. For realtors, ask about changing sold/new property listings and whether they want weekly potential opportunities. Do not claim the lead-hunting service is already live. Before sending a signup link, use select_sales_plan to persist the agreed plan; only proceed if it succeeds. Assigned demo URL: ${ctx.demoUrl || "NOT PROVIDED"}. Spoken language: English. Proactively offer the prepared demo link by SMS, with consent. Additional factual notes: ${ctx.salesNotes || "none"}`
+          : "CALL MODE: OUTBOUND SMART-PRICING SALES. You called the prospect. Lead naturally, do not lead with price, discover update frequency and relevant business needs. For realtors, ask about frequent property changes and interest in proposed weekly potential leads (not yet live). Recommend $49 for stable sites, $99 for regular updates or the proposed lead feature, $149 only for scoped advanced needs. Confirm the chosen plan and use select_sales_plan to save it before sending signup SMS. If the customer changes requirements, update the quote again. Never promise undeployed features.");
 
   const response = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
@@ -839,7 +898,7 @@ async function runAssistant(conversation, ctx) {
     tools: ctx?.callMode === "agent_orientation"
       ? tools.filter(tool => tool.function?.name === "end_call")
       : ctx?.callMode === "inbound"
-      ? tools.filter(tool => tool.function?.name !== "schedule_sales_callback")
+      ? tools.filter(tool => !["schedule_sales_callback", "select_sales_plan"].includes(tool.function?.name))
       : tools,
     tool_choice: "auto",
     max_tokens: 180,
@@ -885,6 +944,12 @@ async function runAssistant(conversation, ctx) {
               ok: false,
               error: "sms_consent_not_confirmed"
             };
+    }
+
+    if (call.function?.name === "select_sales_plan") {
+      let args = {};
+      try { args = JSON.parse(call.function.arguments || "{}"); } catch {}
+      result = await selectSalesPlan(ctx, args);
     }
 
     if (call.function?.name === "send_demo_link") {
@@ -1313,7 +1378,8 @@ app.prepare().then(() => {
           supportToken: cp.support_token || "",
           businessType: String(cp.business_type || "").slice(0, 100),
           offerType: String(cp.offer_type || "").slice(0, 120),
-          monthlyPlan: ["49", "99", "149"].includes(String(cp.monthly_plan)) ? String(cp.monthly_plan) : "",
+          monthlyPlan: "", // The form no longer assigns a sales price.
+          quotedPlan: null,
           demoUrl: String(cp.demo_url || "").slice(0, 500),
           salesNotes: String(cp.sales_notes || "").slice(0, 1500),
           welcomeGreeting: String(cp.welcome_greeting ||
@@ -1346,7 +1412,7 @@ app.prepare().then(() => {
         if (ws.ctx.callMode !== "inbound" && ws.ctx.offerType) {
           context.push(`Manual outbound offer: ${ws.ctx.offerType}`);
           context.push(`Business type: ${ws.ctx.businessType}`);
-          context.push(`Quoted price: $${ws.ctx.monthlyPlan}/month`);
+          context.push("Pricing: NOT YET QUOTED. Qualify and select the appropriate plan during this call.");
           context.push(`Preferred language: ${ws.ctx.language}`);
           context.push(`Demo URL: ${ws.ctx.demoUrl || "not provided"}`);
           if (ws.ctx.salesNotes) context.push(`Additional sales notes: ${ws.ctx.salesNotes}`);
