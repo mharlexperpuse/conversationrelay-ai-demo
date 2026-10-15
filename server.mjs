@@ -136,13 +136,13 @@ async function postOrientationEvent(payload) {
 // conversation already processed for Sofia and saves one concise factual result.
 const ORIENTATION_OUTCOMES = new Set([
   "ORIENTED", "INTERESTED", "SIGNUP_REQUESTED", "NOT_INTERESTED",
-  "CALLBACK_REQUESTED", "DO_NOT_CONTACT", "OTHER"
+  "CALLBACK_REQUESTED", "DO_NOT_CONTACT", "NO_RESPONSE", "OTHER"
 ]);
 
 function orientationOutcomeFallback(conversation) {
   const agentLines = conversation.filter(m => m?.role === "user" && typeof m.content === "string")
     .map(m => m.content.trim()).filter(Boolean);
-  if (!agentLines.length) return null; // No human reply: don't fabricate a result.
+  if (!agentLines.length) return { outcome: "NO_RESPONSE", notes: "No finalized human speech was received during this orientation session.", agent_questions: "", service_issues: "" };
   // These are specific opt-out instructions, not ordinary transcription refusals.
   const lower = agentLines.join(" ").toLowerCase();
   if (/\b(?:do not call(?: me)?(?: again)?|don't call(?: me)?(?: again)?|stop calling(?: me)?|remove me from (?:your|the) (?:list|calls)|never call(?: me)? again)\b/.test(lower)) {
@@ -158,12 +158,12 @@ async function inferOrientationOutcome(conversation) {
     .map(m => ({ role: m.role === "user" ? "agent" : "sofia", text: m.content.slice(0, 900) }));
   const fallback = orientationOutcomeFallback(conversation);
   if (!fallback) return null;
-  if (fallback.outcome === "DO_NOT_CONTACT") return fallback;
+  if (fallback.outcome === "DO_NOT_CONTACT" || fallback.outcome === "NO_RESPONSE") return fallback;
   try {
     const response = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
       messages: [
-        { role: "system", content: `Classify the actual result of a WebLynxForge human sales AGENT orientation call. Return ONLY valid JSON with keys outcome, notes, agent_questions, service_issues. Allowed outcomes: ORIENTED, INTERESTED, SIGNUP_REQUESTED, NOT_INTERESTED, CALLBACK_REQUESTED, DO_NOT_CONTACT, OTHER. Only label SIGNUP_REQUESTED if the agent clearly wanted agent registration. Only label ORIENTED when a substantive orientation was delivered to a participating human; a completed telephone connection alone does not prove it. Don't mistake refusal of transcript permission for lack of sales interest. DO_NOT_CONTACT when the agent requests no more calls. NOTES must be a concise factual summary (max 350 characters) of confirmed agent interests, questions, objections or next steps, without direct quotes, full dialogue or personal/sensitive details. AGENT_QUESTIONS must list the agent's actual questions as concise paraphrased lines, max 900 characters total, or empty string if none. SERVICE_ISSUES must list the agent's actual concerns, complaints, confusing explanations, feature requests, or unresolved problems as concise paraphrased lines, max 900 characters, or empty string if none. Do not invent questions or concerns. Distinguish an agent question from Sofia's questions. Avoid personal information. If ambiguous say OTHER and describe the limitation. Do not invent a signup, callback appointment, registration or SMS delivery.` },
+        { role: "system", content: `Classify the actual result of a WebLynxForge human sales AGENT orientation call. Return ONLY valid JSON with keys outcome, notes, agent_questions, service_issues. Allowed outcomes: ORIENTED, INTERESTED, SIGNUP_REQUESTED, NOT_INTERESTED, CALLBACK_REQUESTED, DO_NOT_CONTACT, NO_RESPONSE, OTHER. Prefer INTERESTED when the agent clearly expresses interest, even if training was delivered. CALLBACK_REQUESTED if the agent asks for another call or to be contacted later. NOT_INTERESTED if the agent declines the opportunity. ORIENTED only if training was delivered and no stronger expressed decision applies. NO_RESPONSE if the agent never meaningfully participated. OTHER is a last resort only when their intent truly cannot be determined. Only label SIGNUP_REQUESTED if the agent clearly wanted agent registration. Only label ORIENTED when a substantive orientation was delivered to a participating human; a completed telephone connection alone does not prove it. Don't mistake refusal of transcript permission for lack of sales interest. DO_NOT_CONTACT when the agent requests no more calls. NOTES must be a concise factual summary (max 350 characters) of confirmed agent interests, questions, objections or next steps, without direct quotes, full dialogue or personal/sensitive details. AGENT_QUESTIONS must list the agent's actual questions as concise paraphrased lines, max 900 characters total, or empty string if none. SERVICE_ISSUES must list the agent's actual concerns, complaints, confusing explanations, feature requests, or unresolved problems as concise paraphrased lines, max 900 characters, or empty string if none. Do not invent questions or concerns. Distinguish an agent question from Sofia's questions. Avoid personal information. If ambiguous say OTHER and describe the limitation. Do not invent a signup, callback appointment, registration or SMS delivery.` },
         { role: "user", content: JSON.stringify(meaningful) }
       ],
       response_format: { type: "json_object" },
@@ -186,14 +186,15 @@ async function inferOrientationOutcome(conversation) {
 async function saveAutomaticOrientationOutcome(ctx, conversation) {
   if (ctx?.callMode !== "agent_orientation" || !ctx?.callSid || !ctx?.orientationToken) return;
   // A real saved outcome, e.g. DNC, must not be overwritten by an uncertain summary.
-  if (ctx.orientationOutcomeSaved) return;
+  // Final review should enrich/replace early tool outcomes; the PHP endpoint
+  // protects explicit Do Not Contact and administrator overrides.
   const outcome = await inferOrientationOutcome(conversation);
   if (!outcome) {
-    console.log("Sofia orientation auto-outcome skipped (no captured human speech):", ctx.callSid);
+    console.log("Sofia orientation auto-outcome skipped (no classifier result):", ctx.callSid);
     return;
   }
   const payload = {
-    action: "outcome", call_sid: ctx.callSid,
+    action: "finalize_outcome", call_sid: ctx.callSid,
     orientation_token: ctx.orientationToken,
     outcome: outcome.outcome, notes: outcome.notes,
     agent_questions: outcome.agent_questions || "",
@@ -2032,10 +2033,8 @@ app.prepare().then(() => {
             errors: ws.ctx.orientationTranscriptErrorCount || 0
           }));
         }).catch(() => {});
-        if (!ws.ctx.orientationOutcomeSaved) {
-          void saveAutomaticOrientationOutcome({ ...ws.ctx }, conversation)
-            .catch(error => console.warn("Sofia orientation final outcome failed:", error?.name || "error"));
-        }
+        void saveAutomaticOrientationOutcome({ ...ws.ctx }, conversation)
+          .catch(error => console.warn("Sofia orientation final outcome failed:", error?.name || "error"));
       }
       if (ws.callSid) sessions.delete(ws.callSid);
     });
