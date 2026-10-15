@@ -17,6 +17,7 @@ const sessions = new Map();
 // This never sends transcript content to console logs.
 const TRANSCRIPTS_ENABLED = process.env.SOFIA_TRANSCRIPTS_ENABLED === "1";
 const TRANSCRIPT_API = "https://weblynxforge.dev/sofia-transcript.php";
+const ORIENTATION_RECORD_API = "https://weblynxforge.dev/sofia-orientation-record.php";
 
 // Deterministic voicemail detection: avoid spending OpenAI tokens talking to a mailbox.
 // This is speech-prompt recognition, not Twilio pre-answer AMD. It detects clear
@@ -110,7 +111,42 @@ async function postTranscriptEvent(payload) {
   return false;
 }
 
+async function postOrientationEvent(payload) {
+  try {
+    const res = await fetch(ORIENTATION_RECORD_API, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(7000)
+    });
+    const result = await res.json().catch(() => ({ ok: false }));
+    return res.ok && result.ok === true
+      ? { ok: true, status: result.status || "saved" }
+      : { ok: false, error: result.error || "orientation_storage_error" };
+  } catch (error) {
+    console.warn("Sofia orientation record unavailable:", error?.name || "transport_error");
+    return { ok: false, error: "orientation_storage_unavailable" };
+  }
+}
+
 function queueTranscript(ws, role, spokenText, source = "conversation") {
+  // Orientation text is saved ONLY after the person explicitly agrees to
+  // a written transcript and the server confirms the signed consent event.
+  if (ws?.ctx?.callMode === "agent_orientation") {
+    if (!ws?.callSid || !ws?.ctx?.orientationTranscriptEnabled || !ws?.ctx?.orientationToken) return;
+    const text = String(spokenText || "").trim();
+    if (!text) return;
+    ws.transcriptSeq = (ws.transcriptSeq || 0) + 1;
+    const payload = {
+      action: "append", call_sid: ws.callSid,
+      orientation_token: ws.ctx.orientationToken,
+      speaker: role === "customer" ? "customer" : "sofia",
+      sequence_no: ws.transcriptSeq, text: text.slice(0, 3500)
+    };
+    ws.transcriptChain = (ws.transcriptChain || Promise.resolve())
+      .then(() => postOrientationEvent(payload))
+      .catch(error => console.warn("Sofia orientation transcript queue failed:", error?.name || "unknown"));
+    ws.ctx.orientationTranscriptDrain = ws.transcriptChain;
+    return;
+  }
   if (!TRANSCRIPTS_ENABLED || !ws?.callSid) return;
   const inbound = ws.ctx?.callMode === "inbound";
   if (inbound) {
@@ -356,6 +392,10 @@ Never claim that a particular domain is available or registered unless the WebLy
 
 Do not tell the customer that they must choose a domain before payment.
 
+AGENT ORIENTATION HISTORY, CONSENT AND OUTCOMES:
+For manual call_mode agent_orientation only, after connecting with a HUMAN, before saving any spoken transcript, briefly request permission in the agent's chosen language to keep a WRITTEN conversation transcript for the WebLynxForge team to review. Example: "Before we continue, may I save a written transcript of our orientation for follow-up and quality review? You can say no, and we can still continue." If the agent explicitly says YES, call enable_orientation_transcript. If they say no, do not call the tool, do not repeat or pressure, and proceed with orientation without any transcript storage. Never suggest a recording is already enabled. If consent is withdrawn later, call revoke_orientation_transcript promptly and do not log further dialogue. Do not claim a transcript was saved unless a tool confirmed it. This is written text only, not call audio recording.
+During orientation, when clear meaningful intent is expressed, call save_orientation_outcome to register ORIENTED, INTERESTED, SIGNUP_REQUESTED, NOT_INTERESTED, CALLBACK_REQUESTED, DO_NOT_CONTACT or OTHER, plus a brief factual note. Never invent an outcome. In particular, calling someone does not mean they were oriented or registered; when unknown, leave outcome unreported. Save do-not-contact intent without sales pressure. This agent-orientation outcome is NOT the normal website sales status.
+
 AI IDENTITY:
 Do not proactively announce that you are AI, a bot, or an automated assistant during a normal sales conversation.
 
@@ -446,6 +486,33 @@ const ORIENTATION_LANGUAGES = {
 };
 
 const tools = [
+  {
+    type: "function",
+    function: {
+      name: "enable_orientation_transcript",
+      description: "For MANUAL agent_orientation only. The human agent has just explicitly said yes to storing a written transcript for staff review. Never call on silence, ambiguous replies, voicemail, or without explicit permission.",
+      parameters: { type: "object", properties: { consent_confirmed: { type: "boolean" } }, required: ["consent_confirmed"], additionalProperties: false }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "revoke_orientation_transcript",
+      description: "If a human agent withdraws written transcript consent, stop recording and delete prior orientation text immediately.",
+      parameters: { type: "object", properties: { requested: { type: "boolean" } }, required: ["requested"], additionalProperties: false }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "save_orientation_outcome",
+      description: "Save the real, confirmed outcome of a MANUAL human agent orientation. No guessing; call when the agent clearly expresses an outcome or at the natural conclusion. This is not a website sales quote or SMS tool.",
+      parameters: { type: "object", properties: {
+        outcome: { type: "string", enum: ["ORIENTED","INTERESTED","SIGNUP_REQUESTED","NOT_INTERESTED","CALLBACK_REQUESTED","DO_NOT_CONTACT","OTHER"] },
+        notes: { type: "string", description: "A brief factual note of what the agent said; do not invent facts." }
+      }, required: ["outcome","notes"], additionalProperties: false }
+    }
+  },
   {
     type: "function",
     function: {
@@ -960,7 +1027,7 @@ async function runAssistant(conversation, ctx) {
     tools: tools.filter(tool => {
       const name = tool.function?.name;
       if (ctx?.callMode === "agent_orientation") {
-        return ["send_agent_signup_link", "select_sales_plan", "send_checkout_link", "end_call"].includes(name);
+        return ["send_agent_signup_link", "select_sales_plan", "send_checkout_link", "end_call", "enable_orientation_transcript", "revoke_orientation_transcript", "save_orientation_outcome"].includes(name);
       }
       if (ctx?.callMode === "inbound") {
         return !["schedule_sales_callback", "send_demo_link"].includes(name);
@@ -1017,6 +1084,35 @@ async function runAssistant(conversation, ctx) {
       let args = {};
       try { args = JSON.parse(call.function.arguments || "{}"); } catch {}
       result = await selectSalesPlan(ctx, args);
+    }
+
+    if (call.function?.name === "enable_orientation_transcript") {
+      let args = {};
+      try { args = JSON.parse(call.function.arguments || "{}"); } catch {}
+      if (ctx?.callMode === "agent_orientation" && args.consent_confirmed === true && ctx.callSid && ctx.orientationToken) {
+        result = await postOrientationEvent({ action: "consent", call_sid: ctx.callSid, orientation_token: ctx.orientationToken });
+        if (result.ok) ctx.orientationTranscriptEnabled = true;
+      } else result = { ok: false, error: "explicit_consent_required" };
+    }
+
+    if (call.function?.name === "revoke_orientation_transcript") {
+      let args = {};
+      try { args = JSON.parse(call.function.arguments || "{}"); } catch {}
+      if (ctx?.callMode === "agent_orientation" && args.requested === true && ctx.callSid && ctx.orientationToken) {
+        ctx.orientationTranscriptEnabled = false;
+        // Flush any text already queued before revoking; then delete all text.
+        await (ctx.orientationTranscriptDrain || Promise.resolve()).catch(() => {});
+        result = await postOrientationEvent({ action: "revoke", call_sid: ctx.callSid, orientation_token: ctx.orientationToken });
+      } else result = { ok: false, error: "revocation_not_requested" };
+    }
+
+    if (call.function?.name === "save_orientation_outcome") {
+      let args = {};
+      try { args = JSON.parse(call.function.arguments || "{}"); } catch {}
+      if (ctx?.callMode === "agent_orientation" && ctx.callSid && ctx.orientationToken) {
+        result = await postOrientationEvent({ action: "outcome", call_sid: ctx.callSid, orientation_token: ctx.orientationToken,
+          outcome: args.outcome, notes: String(args.notes || "").slice(0, 450) });
+      } else result = { ok: false, error: "not_an_orientation_call" };
     }
 
     if (call.function?.name === "send_agent_signup_link") {
@@ -1453,6 +1549,7 @@ app.prepare().then(() => {
           supportEndpoint: cp.support_endpoint || "",
           supportToken: cp.support_token || "",
           orientationToken: cp.orientation_token || "",
+          orientationTranscriptEnabled: false,
           businessType: String(cp.business_type || "").slice(0, 100),
           offerType: String(cp.offer_type || "").slice(0, 120),
           monthlyPlan: "", // The form no longer assigns a sales price.
