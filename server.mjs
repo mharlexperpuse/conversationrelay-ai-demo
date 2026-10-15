@@ -188,7 +188,10 @@ async function saveAutomaticOrientationOutcome(ctx, conversation) {
   // A real saved outcome, e.g. DNC, must not be overwritten by an uncertain summary.
   if (ctx.orientationOutcomeSaved) return;
   const outcome = await inferOrientationOutcome(conversation);
-  if (!outcome) return;
+  if (!outcome) {
+    console.log("Sofia orientation auto-outcome skipped (no captured human speech):", ctx.callSid);
+    return;
+  }
   const payload = {
     action: "outcome", call_sid: ctx.callSid,
     orientation_token: ctx.orientationToken,
@@ -205,7 +208,7 @@ async function saveAutomaticOrientationOutcome(ctx, conversation) {
     }
     if (attempt < 2) await waitForTranscriptRetry(650 * (attempt + 1));
   }
-  console.warn("Sofia orientation auto-outcome not saved:", ctx.callSid);
+  console.warn("Sofia orientation auto-outcome not saved after 3 attempts:", ctx.callSid);
 }
 
 // Opt-outs are processed before any speech from that turn is persisted.
@@ -228,7 +231,8 @@ async function handleOrientationTranscriptBeforeSpeech(ws, spoken) {
     const result = await postOrientationEvent({
       action: "revoke", call_sid: ws.callSid, orientation_token: ws.ctx.orientationToken
     });
-    if (!result.ok) console.warn("Sofia orientation transcript opt-out not confirmed:", ws.callSid);
+    if (!result.ok) console.warn("Sofia orientation transcript opt-out not confirmed:", ws.callSid, result.error);
+    else console.log("Sofia orientation transcript opt-out honored:", ws.callSid);
     return;
   }
   if (!ORIENTATION_ANNOUNCED_MODE || ws.ctx.orientationTranscriptOptedOut ||
@@ -241,8 +245,10 @@ async function handleOrientationTranscriptBeforeSpeech(ws, spoken) {
     orientation_token: ws.ctx.orientationToken,
     method: "continued_after_notice"
   });
-  if (result.ok) ws.ctx.orientationTranscriptEnabled = true;
-  else console.warn("Sofia orientation announced transcription not activated:", ws.callSid, result.error);
+  if (result.ok) {
+    ws.ctx.orientationTranscriptEnabled = true;
+    console.log("Sofia orientation transcript activated:", ws.callSid);
+  } else console.warn("Sofia orientation announced transcription not activated:", ws.callSid, result.error);
 }
 
 function queueTranscript(ws, role, spokenText, source = "conversation") {
@@ -260,8 +266,18 @@ function queueTranscript(ws, role, spokenText, source = "conversation") {
       sequence_no: ws.transcriptSeq, text: text.slice(0, 3500)
     };
     ws.transcriptChain = (ws.transcriptChain || Promise.resolve())
-      .then(() => postOrientationEvent(payload))
-      .catch(error => console.warn("Sofia orientation transcript queue failed:", error?.name || "unknown"));
+      .then(async () => {
+        const saved = await postOrientationEvent(payload);
+        if (saved.ok) ws.ctx.orientationTranscriptSavedCount = (ws.ctx.orientationTranscriptSavedCount || 0) + 1;
+        else {
+          ws.ctx.orientationTranscriptErrorCount = (ws.ctx.orientationTranscriptErrorCount || 0) + 1;
+          console.warn("Sofia orientation transcript append rejected:", ws.callSid, saved.error);
+        }
+      })
+      .catch(error => {
+        ws.ctx.orientationTranscriptErrorCount = (ws.ctx.orientationTranscriptErrorCount || 0) + 1;
+        console.warn("Sofia orientation transcript queue failed:", ws.callSid, error?.name || "unknown");
+      });
     ws.ctx.orientationTranscriptDrain = ws.transcriptChain;
     return;
   }
@@ -1654,6 +1670,10 @@ app.prepare().then(() => {
           orientationTranscriptEnabled: false,
           orientationTranscriptOptedOut: false,
           orientationNoticeInGreeting: cp.orientation_notice_in_greeting === "1",
+          orientationFinalSpeechCount: 0,
+          orientationPartialSpeechCount: 0,
+          orientationTranscriptSavedCount: 0,
+          orientationTranscriptErrorCount: 0,
           businessType: String(cp.business_type || "").slice(0, 100),
           offerType: String(cp.offer_type || "").slice(0, 120),
           monthlyPlan: "", // The form no longer assigns a sales price.
@@ -1732,16 +1752,35 @@ app.prepare().then(() => {
           "mode:",
           ws.ctx.callMode
         );
+        if (ws.ctx.callMode === "agent_orientation") {
+          // Diagnostic metadata only: no customer speech, passwords, or signing tokens.
+          console.log("Sofia orientation setup check:", JSON.stringify({
+            call_sid: ws.callSid,
+            server_transcript_mode: ORIENTATION_ANNOUNCED_MODE,
+            notice_flag: ws.ctx.orientationNoticeInGreeting,
+            signed_token_present: Boolean(ws.ctx.orientationToken),
+            greeting_configured: Boolean(ws.ctx.welcomeGreeting)
+          }));
+        }
 
         return;
       }
 
+      if (ws.ctx?.callMode === "agent_orientation" && message.type === "prompt" &&
+          message.voicePrompt && message.last === false) {
+        ws.ctx.orientationPartialSpeechCount = (ws.ctx.orientationPartialSpeechCount || 0) + 1;
+      }
       if (
         message.type !== "prompt" ||
         !message.voicePrompt ||
         message.last === false
       ) {
         return;
+      }
+      if (ws.ctx?.callMode === "agent_orientation") {
+        ws.ctx.orientationFinalSpeechCount = (ws.ctx.orientationFinalSpeechCount || 0) + 1;
+        console.log("Sofia orientation received finalized speech:", ws.callSid,
+          "count:", ws.ctx.orientationFinalSpeechCount);
       }
 
       // Twilio provides the customer's final speech-to-text prompt.
@@ -1874,6 +1913,12 @@ app.prepare().then(() => {
         role: "user",
         content: message.voicePrompt
       });
+      // Preserve finalized human speech even if the call disconnects while
+      // OpenAI is still preparing the reply. Otherwise the close-time factual
+      // outcome could incorrectly show Not reported.
+      if (ws.ctx?.callMode === "agent_orientation" && ws.callSid) {
+        sessions.set(ws.callSid, conversation);
+      }
 
       try {
         const out = await runAssistant(
@@ -1965,12 +2010,32 @@ app.prepare().then(() => {
     });
 
     ws.on("close", () => {
-      // No verbatim conversation is persisted by this fallback. The live
-      // in-memory context is classified into an outcome and brief notes.
+      // Factual summaries come only from speech Twilio finalized; an answered
+      // phone call with no finalized speech cannot produce a real transcript.
       const conversation = ws.callSid ? (sessions.get(ws.callSid) || []) : [];
-      if (ws.ctx?.callMode === "agent_orientation" && !ws.ctx.orientationOutcomeSaved) {
-        void saveAutomaticOrientationOutcome({ ...ws.ctx }, conversation)
-          .catch(error => console.warn("Sofia orientation final outcome failed:", error?.name || "error"));
+      if (ws.ctx?.callMode === "agent_orientation") {
+        console.log("Sofia orientation relay closed:", JSON.stringify({
+          call_sid: ws.callSid,
+          final_speech_events: ws.ctx.orientationFinalSpeechCount || 0,
+          partial_speech_events: ws.ctx.orientationPartialSpeechCount || 0,
+          transcript_active: Boolean(ws.ctx.orientationTranscriptEnabled),
+          transcript_opted_out: Boolean(ws.ctx.orientationTranscriptOptedOut),
+          notice_flag: Boolean(ws.ctx.orientationNoticeInGreeting),
+          outcome_already_saved: Boolean(ws.ctx.orientationOutcomeSaved)
+        }));
+        // The WebSocket closing doesn't cancel HTTP saves. Report the actual
+        // write results after the final queued event finishes.
+        void (ws.transcriptChain || Promise.resolve()).then(() => {
+          console.log("Sofia orientation transcript writes completed:", JSON.stringify({
+            call_sid: ws.callSid,
+            saved: ws.ctx.orientationTranscriptSavedCount || 0,
+            errors: ws.ctx.orientationTranscriptErrorCount || 0
+          }));
+        }).catch(() => {});
+        if (!ws.ctx.orientationOutcomeSaved) {
+          void saveAutomaticOrientationOutcome({ ...ws.ctx }, conversation)
+            .catch(error => console.warn("Sofia orientation final outcome failed:", error?.name || "error"));
+        }
       }
       if (ws.callSid) sessions.delete(ws.callSid);
     });
