@@ -1,4 +1,5 @@
 import { createServer } from "http";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { parse } from "url";
 import next from "next";
 import { WebSocketServer } from "ws";
@@ -1617,13 +1618,101 @@ function endConversationRelay(
   );
 }
 
+// V27: isolated SMS completion API. Phone call /ws implementation is unchanged.
+// Only the PHP Twilio webhook can invoke this endpoint (signed body + timestamp).
+const SMS_DEPARTMENTS = Object.freeze({
+  billing: "Sales & Billing",
+  agent_orientation: "Agent Orientation",
+  pricing: "Pricing Plans",
+  support: "Technical Support",
+  general: "General Inquiry"
+});
+
+const SMS_SYSTEM_PROMPT = `You are Sofia, the helpful and friendly WebLynxForge text-messaging assistant.
+Always respond in natural, concise ENGLISH, usually 1-3 short sentences; never present a language menu.
+You are responding to an incoming SMS from a customer or prospective agent who selected a department.
+Do not proactively use the terms AI, bot or automated in your greeting. If directly asked, be truthful that you are an automated assistant.
+Respect their selected department. Do not force a website sales pitch on Agent Orientation or Technical Support.
+WebLynxForge provides managed business websites, eligible standard domain, hosting, SSL, maintenance, reasonable content updates, and basic SEO foundations. Plan prices: $49, $99 or $149 per month.
+For plan recommendations, ask about website complexity, content update frequency and features; do not claim custom integrations or proposed lead-hunting features are already live.
+For Agent Orientation, explain recurring commissions for referred paying customers: $10 for $49 plan, $20 for $99 plan, $30 for $149 plan per paid month, subject to eligibility. Never guarantee earnings.
+For Technical Support, ask for name, website/project and issue; do not claim you filed a ticket, connected a human, changed billing, or made a fix. The SMS channel currently cannot perform those actions.
+For Billing, never claim to see a customer's account details or process refunds. Ask for their billing issue and offer to help explain next steps.
+For sales, if the user wants to sign up, you may provide the public website link https://weblynxforge.dev/signup.php on request. Never imply a personal plan/quote or payment was saved.
+For virtual tours, distinguish the separate per-property service from monthly website plans. Do not invent pricing for custom property types.
+Do not claim to send separate signup links or perform any backend action. You have text chat only, no tools.
+No mass marketing, no cold outreach, no promises of guaranteed rankings. Honor opt-out requests; never encourage messaging after STOP.
+Keep replies under 430 characters unless a user explicitly needs a more detailed answer. Do not invent facts or personal records.`;
+
+async function handleSofiaSmsHttp(req, res) {
+  const send = (code, payload) => {
+    if (res.headersSent) return;
+    res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(payload));
+  };
+  if (req.method !== "POST") return send(405, { ok: false, error: "method_not_allowed" });
+  const token = process.env.TWILIO_AUTH_TOKEN || "";
+  const ts = String(req.headers["x-wlf-timestamp"] || "");
+  const signature = String(req.headers["x-wlf-signature"] || "");
+  if (!token || !/^\d{10}$/.test(ts) || Math.abs(Date.now() / 1000 - Number(ts)) > 120 ||
+      !/^sha256=[a-f0-9]{64}$/.test(signature)) {
+    return send(401, { ok: false, error: "unauthorized" });
+  }
+  let raw = "";
+  try {
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of req) {
+      chunks.push(chunk);
+      bytes += chunk.length;
+      if (bytes > 16000) return send(413, { ok: false, error: "payload_too_large" });
+    }
+    raw = Buffer.concat(chunks).toString("utf8");
+    const expected = createHmac("sha256", token).update(`wlf-sms-v27:${ts}:${raw}`).digest("hex");
+    if (!timingSafeEqual(Buffer.from(signature.slice(7), "hex"), Buffer.from(expected, "hex"))) {
+      return send(401, { ok: false, error: "unauthorized" });
+    }
+    const data = JSON.parse(raw);
+    const department = String(data?.department || "");
+    const question = String(data?.message || "").trim().slice(0, 1200);
+    if (!Object.hasOwn(SMS_DEPARTMENTS, department) || !question) {
+      return send(400, { ok: false, error: "invalid_request" });
+    }
+    const messages = Array.isArray(data?.history) ? data.history : [];
+    const previous = messages.slice(-18)
+      .filter(m => (m?.role === "assistant" || m?.role === "user") && typeof m?.body === "string")
+      .map(m => ({ role: m.role, content: String(m.body).slice(0, 800) }));
+    const completion = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      messages: [
+        { role: "system", content: SMS_SYSTEM_PROMPT },
+        { role: "system", content: `The user selected department: ${SMS_DEPARTMENTS[department]}. Do not present the department menu again unless explicitly asked.` },
+        ...previous,
+        { role: "user", content: question }
+      ],
+      max_tokens: 220,
+      temperature: 0.4
+    }, { timeout: 7600, maxRetries: 0 });
+    const reply = String(completion?.choices?.[0]?.message?.content || "").trim().slice(0, 480);
+    if (!reply) return send(502, { ok: false, error: "empty_completion" });
+    return send(200, { ok: true, reply });
+  } catch (error) {
+    console.warn("Sofia SMS completion unavailable:", error?.name || "unknown_error");
+    return send(503, { ok: false, error: "sms_service_unavailable" });
+  }
+}
+
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
-  const server = createServer((req, res) =>
-    handle(req, res, parse(req.url, true))
-  );
+  const server = createServer((req, res) => {
+    if (req.url?.split("?")[0] === "/internal/sofia-sms") {
+      void handleSofiaSmsHttp(req, res);
+      return;
+    }
+    handle(req, res, parse(req.url, true));
+  });
 
   const wss = new WebSocketServer({
     server,
